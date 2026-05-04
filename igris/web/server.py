@@ -38,6 +38,7 @@ from igris.core.memory import recent_memory_events, append_memory_event
 from igris.core import mission_planner
 from igris.core import decision_memory
 from igris.core import autonomous_loop
+from igris.layers.validation import validator as task_validator
 
 MODULE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = MODULE_DIR / "templates"
@@ -453,6 +454,84 @@ def create_app() -> FastAPI:
     @app.get("/api/loop/recent")
     async def api_loop_recent(limit: int = 20) -> Dict[str, object]:
         return {"steps": autonomous_loop.get_recent_steps(limit)}
+
+    # ---- Validation ----
+
+    @app.post("/api/tasks/{task_id}/validate")
+    async def api_validate_task(task_id: int, request: Request) -> Dict[str, object]:
+        task = task_engine.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        content = {}
+        if request.headers.get("content-type", "").startswith("application/json"):
+            content = await request.json()
+        reports = execution_report.recent_reports(limit=10)
+        files_changed = content.get("files_changed", [])
+        manual_reason = content.get("manual_completion_reason", "")
+        result = task_validator.validate_task_completion(
+            task, reports=reports, files_changed=files_changed,
+            manual_completion_reason=manual_reason,
+            project_root=str(CONFIG.project_root),
+        )
+        task_engine.append_timeline_event({
+            "type": "validation", "task_id": task_id,
+            "title": f"Validation: {result.overall_status}",
+            "detail": result.reason, "severity": "info" if result.valid else "warning",
+        })
+        return result.to_dict()
+
+    @app.get("/api/tasks/{task_id}/validations")
+    async def api_task_validations(task_id: int) -> Dict[str, object]:
+        task = task_engine.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        validations = task_validator.get_validations_for_task(
+            task_id, project_root=str(CONFIG.project_root),
+        )
+        return {"validations": [v.to_dict() for v in validations]}
+
+    @app.get("/api/validations/{validation_id}")
+    async def api_get_validation(validation_id: str) -> Dict[str, object]:
+        result = task_validator.get_validation(
+            validation_id, project_root=str(CONFIG.project_root),
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="Validation not found")
+        return result.to_dict()
+
+    @app.post("/api/tasks/{task_id}/complete")
+    async def api_complete_task_validated(task_id: int, request: Request) -> Dict[str, object]:
+        task = task_engine.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        content = {}
+        if request.headers.get("content-type", "").startswith("application/json"):
+            content = await request.json()
+        # Check existing validations
+        validations = task_validator.get_validations_for_task(
+            task_id, project_root=str(CONFIG.project_root),
+        )
+        has_valid = any(v.valid for v in validations)
+        manual_reason = content.get("manual_completion_reason", "")
+        if not has_valid and not manual_reason:
+            raise HTTPException(
+                status_code=400,
+                detail="Task has no passing validation. Provide manual_completion_reason or validate first.",
+            )
+        if manual_reason and not has_valid:
+            # Create manual validation
+            task_validator.validate_task_completion(
+                task, manual_completion_reason=manual_reason,
+                project_root=str(CONFIG.project_root),
+            )
+        updated = task_engine.complete_task(task_id, result=manual_reason or "Validated completion")
+        task_engine.append_timeline_event({
+            "type": "validation", "task_id": task_id,
+            "title": "Task completed (validated)",
+            "detail": manual_reason or "passed validation",
+            "severity": "info",
+        })
+        return updated.to_dict() if updated else {}
 
     # ---- Missions ----
 
