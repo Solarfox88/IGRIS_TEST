@@ -1,17 +1,81 @@
 #!/usr/bin/env bash
+# start_igris.sh — Start the IGRIS_GPT server
 set -euo pipefail
 
-PID_FILE="igris.pid"
-LOG_FILE="logs/igris.log"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+VENV="$REPO_DIR/.venv"
+PID_FILE="$REPO_DIR/logs/igris.pid"
+LOG_FILE="$REPO_DIR/logs/igris.log"
+HOST="${IGRIS_HOST:-0.0.0.0}"
+PORT="${IGRIS_PORT:-7778}"
 
-if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" >/dev/null 2>&1; then
-  echo "[IGRIS] Server is already running (PID $(cat "$PID_FILE"))."
-  exit 0
+# Ensure directories
+mkdir -p "$REPO_DIR/logs"
+mkdir -p "$REPO_DIR/.igris/tasks"
+mkdir -p "$REPO_DIR/.igris/reports"
+mkdir -p "$REPO_DIR/.igris/timeline"
+mkdir -p "$REPO_DIR/.igris/memory"
+
+# Check for existing instance
+if [ -f "$PID_FILE" ]; then
+  OLD_PID=$(cat "$PID_FILE")
+  if kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "IGRIS_GPT is already running (PID $OLD_PID)."
+    echo "Use: bash scripts/stop_igris.sh  to stop it first."
+    exit 1
+  else
+    echo "Stale PID file found. Removing..."
+    rm -f "$PID_FILE"
+  fi
 fi
 
-echo "[IGRIS] Starting IGRIS server..."
-source .venv/bin/activate
-nohup uvicorn igris.web.server:create_app --factory --host 0.0.0.0 --port 7778 \
-  > "$LOG_FILE" 2>&1 &
-echo $! > "$PID_FILE"
-echo "[IGRIS] Server started (PID $(cat "$PID_FILE")). Logs: $LOG_FILE"
+# Activate venv
+if [ -d "$VENV" ]; then
+  # shellcheck disable=SC1091
+  source "$VENV/bin/activate"
+elif [ -f "$REPO_DIR/.venv/bin/activate" ]; then
+  # shellcheck disable=SC1091
+  source "$REPO_DIR/.venv/bin/activate"
+fi
+
+# Load .env if present
+if [ -f "$REPO_DIR/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_DIR/.env"
+  set +a
+fi
+
+echo "=== Starting IGRIS_GPT ==="
+echo "Host: $HOST"
+echo "Port: $PORT"
+echo "Log:  $LOG_FILE"
+echo "PID:  $PID_FILE"
+
+cd "$REPO_DIR"
+nohup python -m uvicorn igris.web.server:app \
+  --host "$HOST" \
+  --port "$PORT" \
+  --factory \
+  --log-level info \
+  >> "$LOG_FILE" 2>&1 &
+SERVER_PID=$!
+echo "$SERVER_PID" > "$PID_FILE"
+
+sleep 2
+
+if kill -0 "$SERVER_PID" 2>/dev/null; then
+  echo ""
+  echo "IGRIS_GPT started (PID $SERVER_PID)"
+  echo "URL: http://$HOST:$PORT"
+  echo ""
+  echo "Commands:"
+  echo "  bash scripts/status_igris.sh   — check status"
+  echo "  bash scripts/stop_igris.sh     — stop server"
+  echo "  tail -f $LOG_FILE              — follow logs"
+else
+  echo "ERROR: Server failed to start. Check $LOG_FILE"
+  rm -f "$PID_FILE"
+  exit 1
+fi

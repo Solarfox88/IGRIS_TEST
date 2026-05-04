@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
+# stop_igris.sh — Stop the IGRIS_GPT server
 set -euo pipefail
 
-PID_FILE="igris.pid"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+PID_FILE="$REPO_DIR/logs/igris.pid"
 
 if [ ! -f "$PID_FILE" ]; then
-  echo "[IGRIS] PID file not found; server may not be running."
+  echo "No PID file found. IGRIS_GPT does not appear to be running."
   exit 0
 fi
 
 PID=$(cat "$PID_FILE")
-if kill -0 "$PID" >/dev/null 2>&1; then
-  echo "[IGRIS] Stopping IGRIS server (PID $PID)..."
+
+if kill -0 "$PID" 2>/dev/null; then
+  echo "Stopping IGRIS_GPT (PID $PID)..."
   kill "$PID"
-  rm -f "$PID_FILE"
-  echo "[IGRIS] Server stopped."
+  sleep 2
+  if kill -0 "$PID" 2>/dev/null; then
+    echo "Process still alive. Sending SIGKILL..."
+    kill -9 "$PID" 2>/dev/null || true
+  fi
+  echo "IGRIS_GPT stopped."
 else
-  echo "[IGRIS] Process $PID not found. Removing stale PID file."
-  rm -f "$PID_FILE"
+  echo "Process $PID is not running (stale PID file)."
 fi
+
+rm -f "$PID_FILE"

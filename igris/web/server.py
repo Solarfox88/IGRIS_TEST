@@ -426,7 +426,12 @@ def create_app() -> FastAPI:
     return app
 
 
-def run_app(app: FastAPI, host: str = "0.0.0.0", port: int = 7778) -> None:
+def app() -> FastAPI:
+    """Factory function for uvicorn ``--factory`` mode."""
+    return create_app()
+
+
+def run_app(application: FastAPI, host: str = "0.0.0.0", port: int = 7778) -> None:
     """Run the FastAPI application using Uvicorn."""
     import uvicorn
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(application, host=host, port=port, log_level="info")

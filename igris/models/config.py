@@ -34,7 +34,7 @@ class Config(BaseModel):
     auto_commit: bool = False
     auto_push: bool = False
     workspace_root: Path = Field(default_factory=lambda: Path(os.getenv("WORKSPACE_ROOT", "./workspace")))
-    project_root: Path = Field(default_factory=lambda: Path(os.getenv("PROJECT_ROOT", "./project")))
+    project_root: Path = Field(default_factory=lambda: Path(os.getenv("PROJECT_ROOT", ".")))
 
     @classmethod
     def load(cls) -> "Config":
