@@ -39,7 +39,10 @@ from igris.core.memory import recent_memory_events, append_memory_event
 from igris.core import mission_planner
 from igris.core import decision_memory
 from igris.core import diagnostics as diagnostics_mod
+from igris.core import safe_policy
+from igris.core import task_selection_explain
 from igris.core import autonomous_loop
+from igris.models.task import TaskStatus
 from igris.layers.validation import validator as task_validator
 
 MODULE_DIR = Path(__file__).resolve().parent
@@ -797,6 +800,35 @@ def create_app() -> FastAPI:
         from igris.agents import list_capabilities
         caps = list_capabilities()
         return {"capabilities": [{"id": c.id, "name": c.name, "description": c.description, "safe": c.safe, "risk": c.risk} for c in caps]}
+
+    # ---- Safety Policy ----
+
+    @app.get("/api/safety/policy")
+    async def api_safety_policy() -> Dict[str, object]:
+        return safe_policy.get_policy_status()
+
+    @app.post("/api/safety/policy/check")
+    async def api_safety_policy_check(request: Request) -> Dict[str, object]:
+        content = await request.json()
+        command_id = content.get("command_id", "")
+        if not command_id:
+            raise HTTPException(status_code=400, detail="command_id required")
+        context = content.get("context")
+        decision = safe_policy.check_command_policy(command_id, context=context)
+        return decision.to_dict()
+
+    # ---- Explainable Task Selection ----
+
+    @app.get("/api/tasks/selection/explain")
+    async def api_explain_task_selection() -> Dict[str, object]:
+        tasks = task_engine.list_tasks()
+        history = [t.description for t in tasks if t.status == TaskStatus.completed]
+        explanation = task_selection_explain.explain_task_selection(
+            candidate_tasks=tasks,
+            history=history,
+            project_root=str(CONFIG.project_root),
+        )
+        return explanation.to_dict()
 
     # ---- Diagnostics ----
 

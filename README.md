@@ -253,6 +253,9 @@ Routes tasks to the cheapest suitable provider:
 | `/api/routing/estimate` | POST | Estimate route + cost |
 | `/api/cost/budget` | GET | Current budget status |
 | `/api/cost/budget` | POST | Update budget config |
+| `/api/safety/policy` | GET | Safety policy config and status |
+| `/api/safety/policy/check` | POST | Check command against safety policy |
+| `/api/tasks/selection/explain` | GET | Explainable task selection with scores |
 | `/api/diagnostics` | GET | Full operational diagnostics report |
 | `/api/diagnostics/summary` | GET | Quick diagnostics summary |
 
@@ -329,6 +332,7 @@ See [docs/SYSTEMD_SERVICE.md](docs/SYSTEMD_SERVICE.md) for production deployment
 - [VALIDATION_MODEL.md](docs/VALIDATION_MODEL.md)
 - [COST_ROUTING.md](docs/COST_ROUTING.md)
 - [OPERATIONAL_DIAGNOSTICS.md](docs/OPERATIONAL_DIAGNOSTICS.md)
+- [STRICT_SAFETY_EXPLAINABLE_SELECTION.md](docs/STRICT_SAFETY_EXPLAINABLE_SELECTION.md)
 
 ## License
 
