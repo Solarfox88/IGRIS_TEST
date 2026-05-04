@@ -183,7 +183,7 @@
     var loaded = false;
     $$('.tab[data-tab="git"]').forEach(function (btn) {
       btn.addEventListener("click", function () {
-        if (!loaded) { loaded = true; loadGit(); }
+        if (!loaded) { loaded = true; loadGit(); loadBranches(); }
       });
     });
   })();
@@ -196,6 +196,108 @@
       $("#git-info").innerHTML = '<span class="error">Failed to load git status</span>';
     }
   }
+
+  async function loadBranches() {
+    var r = await api("GET", "/api/git/branches");
+    if (r.ok) {
+      var d = r.data;
+      var html = "<strong>Current:</strong> " + esc(d.current || "unknown") + "<br>";
+      html += "<strong>Branches:</strong> " + (d.branches || []).map(function(b) { return esc(b); }).join(", ");
+      $("#git-branches").innerHTML = html;
+    }
+  }
+
+  async function loadDiff(staged) {
+    var url = "/api/git/diff" + (staged ? "?staged=true" : "");
+    var r = await api("GET", url);
+    if (r.ok) {
+      var d = r.data;
+      if (!d.diff) {
+        $("#git-diff").innerHTML = "<em>No changes</em>";
+        return;
+      }
+      var lines = d.diff.split("\n").map(function(l) {
+        if (l.startsWith("+++") || l.startsWith("---")) return '<div class="diff-line diff-hdr">' + esc(l) + '</div>';
+        if (l.startsWith("+")) return '<div class="diff-line diff-add">' + esc(l) + '</div>';
+        if (l.startsWith("-")) return '<div class="diff-line diff-del">' + esc(l) + '</div>';
+        if (l.startsWith("@@")) return '<div class="diff-line diff-hdr">' + esc(l) + '</div>';
+        return '<div class="diff-line diff-ctx">' + esc(l) + '</div>';
+      }).join("");
+      var warn = d.secret_detected ? '<div class="error">⚠ Secret-like content detected and redacted</div>' : '';
+      $("#git-diff").innerHTML = warn + lines;
+    }
+  }
+
+  (function() {
+    var el = $("#btn-refresh-git");
+    if (el) el.addEventListener("click", function() { loadGit(); loadBranches(); });
+    el = $("#btn-load-diff");
+    if (el) el.addEventListener("click", function() { loadDiff(false); });
+    el = $("#btn-load-staged-diff");
+    if (el) el.addEventListener("click", function() { loadDiff(true); });
+
+    el = $("#btn-git-safety");
+    if (el) el.addEventListener("click", async function() {
+      var r = await api("GET", "/api/git/safety-check");
+      if (r.ok) {
+        var d = r.data;
+        var html = "<strong>Safe:</strong> " + (d.safe ? "✓ Yes" : "✗ No") + "<br>";
+        if (d.staged_files && d.staged_files.length) html += "<strong>Staged:</strong> " + d.staged_files.map(esc).join(", ") + "<br>";
+        if (d.warnings && d.warnings.length) html += '<div class="error">' + d.warnings.map(esc).join("<br>") + '</div>';
+        if (d.secret_files && d.secret_files.length) html += "<strong>Secret files:</strong> " + d.secret_files.map(esc).join(", ") + "<br>";
+        if (d.runtime_artifacts && d.runtime_artifacts.length) html += "<strong>Artifacts:</strong> " + d.runtime_artifacts.map(esc).join(", ");
+        $("#git-safety").innerHTML = html;
+      }
+    });
+
+    var branchForm = $("#git-branch-form");
+    if (branchForm) branchForm.addEventListener("submit", async function(e) {
+      e.preventDefault();
+      var name = $("#git-branch-name").value.trim();
+      if (!name) return;
+      var r = await api("POST", "/api/git/branch", { name: name });
+      if (r.ok && r.data.success) {
+        $("#git-branch-name").value = "";
+        loadGit();
+        loadBranches();
+      } else {
+        alert("Error: " + (r.data.error || "Failed to create branch"));
+      }
+    });
+
+    var commitForm = $("#git-commit-form");
+    if (commitForm) commitForm.addEventListener("submit", async function(e) {
+      e.preventDefault();
+      var msg = $("#git-commit-msg").value.trim();
+      if (!msg) return;
+      var r = await api("POST", "/api/git/commit-proposal", { message: msg });
+      if (r.ok) {
+        var d = r.data;
+        var html = "<strong>Message:</strong> " + esc(d.message) + "<br>";
+        html += "<strong>Safe:</strong> " + (d.safe ? "✓ Yes" : "✗ No") + "<br>";
+        if (d.files && d.files.length) html += "<strong>Files:</strong> " + d.files.map(esc).join(", ") + "<br>";
+        if (d.warnings && d.warnings.length) html += '<div class="error">' + d.warnings.map(esc).join("<br>") + '</div>';
+        if (d.blocked_files && d.blocked_files.length) html += "<strong>Blocked:</strong> " + d.blocked_files.map(esc).join(", ") + "<br>";
+        if (d.secret_files && d.secret_files.length) html += "<strong>Secret files:</strong> " + d.secret_files.map(esc).join(", ");
+        $("#git-commit-proposal").innerHTML = html;
+      }
+    });
+
+    var prBtn = $("#btn-pr-summary");
+    if (prBtn) prBtn.addEventListener("click", async function() {
+      var r = await api("GET", "/api/git/pr-summary");
+      if (r.ok) {
+        var d = r.data;
+        if (d.error) { $("#git-pr-summary").innerHTML = '<span class="error">' + esc(d.error) + '</span>'; return; }
+        var html = "<strong>Branch:</strong> " + esc(d.branch) + " → " + esc(d.base) + "<br>";
+        html += "<strong>Commits:</strong> " + (d.commit_count || 0) + "<br>";
+        if (d.commits && d.commits.length) html += "<pre>" + d.commits.map(esc).join("\n") + "</pre>";
+        if (d.summary) html += "<strong>Summary:</strong> " + esc(d.summary) + "<br>";
+        if (d.stat) html += "<pre>" + esc(d.stat) + "</pre>";
+        $("#git-pr-summary").innerHTML = html;
+      }
+    });
+  })();
 
   // Tests
   (function () {

@@ -28,6 +28,7 @@ from igris.layers.execution import runner as execution_runner
 from igris.layers.execution.safe_commands import ALLOWED_COMMANDS
 from igris.core import safety
 from igris.layers.git_layer.git_status import get_git_info
+from igris.layers.git_layer import git_ops
 from igris.models.config import CONFIG
 from igris.models.report import GitStatusResponse, TestRunResponse
 from igris.agents import build_default_registry
@@ -131,6 +132,58 @@ def create_app() -> FastAPI:
             branch=info.branch, remote=info.remote,
             dirty=info.dirty, changed=info.changed, head=info.head,
         )
+
+    @app.get("/api/git/diff")
+    async def api_git_diff(staged: bool = False) -> Dict[str, object]:
+        return git_ops.get_diff(staged=staged)
+
+    @app.get("/api/git/diff/stat")
+    async def api_git_diff_stat() -> Dict[str, object]:
+        return git_ops.get_diff_stat()
+
+    @app.get("/api/git/branches")
+    async def api_git_branches() -> Dict[str, object]:
+        return git_ops.list_branches()
+
+    @app.post("/api/git/branch")
+    async def api_git_create_branch(request: Request) -> Dict[str, object]:
+        content = await request.json()
+        name = content.get("name", "")
+        if not name:
+            raise HTTPException(status_code=400, detail="Branch name required")
+        result = git_ops.create_branch(name)
+        if result.get("success"):
+            task_engine.append_timeline_event({
+                "type": "git", "title": f"Branch created: {result.get('branch')}",
+                "detail": "", "severity": "info",
+            })
+        return result
+
+    @app.post("/api/git/commit-proposal")
+    async def api_git_commit_proposal(request: Request) -> Dict[str, object]:
+        content = await request.json()
+        message = content.get("message", "")
+        files = content.get("files")
+        if not message:
+            raise HTTPException(status_code=400, detail="Commit message required")
+        proposal = git_ops.create_commit_proposal(message, files)
+        return {
+            "message": proposal.message,
+            "files": proposal.files,
+            "safe": proposal.safe,
+            "warnings": proposal.warnings,
+            "blocked_files": proposal.blocked_files,
+            "secret_files": proposal.secret_files,
+            "runtime_artifacts": proposal.runtime_artifacts,
+        }
+
+    @app.get("/api/git/safety-check")
+    async def api_git_safety_check() -> Dict[str, object]:
+        return git_ops.pre_commit_safety_check()
+
+    @app.get("/api/git/pr-summary")
+    async def api_git_pr_summary(base: str = "main") -> Dict[str, object]:
+        return git_ops.generate_pr_summary(base_branch=base)
 
     # ---- Routing / Cost ----
 

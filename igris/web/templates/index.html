@@ -68,7 +68,31 @@
           <!-- Git -->
           <div id="tab-git" class="tab-pane" role="tabpanel">
             <h3>Git Status</h3>
+            <button type="button" id="btn-refresh-git" class="action-btn">Refresh</button>
             <div id="git-info" class="info-block"><span class="loading">Loading...</span></div>
+            <h4>Branches</h4>
+            <div id="git-branches" class="info-block"></div>
+            <h4>Create Branch</h4>
+            <form id="git-branch-form" class="patch-form">
+              <input type="text" id="git-branch-name" placeholder="Branch name" aria-label="Branch name" />
+              <button type="submit" class="action-btn">Create Branch</button>
+            </form>
+            <h4>Working Tree Diff</h4>
+            <button type="button" id="btn-load-diff" class="action-btn">Load Diff</button>
+            <button type="button" id="btn-load-staged-diff" class="action-btn">Load Staged Diff</button>
+            <div id="git-diff" class="output-box"></div>
+            <h4>Safety Check</h4>
+            <button type="button" id="btn-git-safety" class="action-btn">Run Safety Check</button>
+            <div id="git-safety" class="info-block"></div>
+            <h4>Commit Proposal</h4>
+            <form id="git-commit-form" class="patch-form">
+              <input type="text" id="git-commit-msg" placeholder="Commit message" aria-label="Commit message" />
+              <button type="submit" class="action-btn">Create Commit Proposal</button>
+            </form>
+            <div id="git-commit-proposal" class="info-block"></div>
+            <h4>PR Summary</h4>
+            <button type="button" id="btn-pr-summary" class="action-btn">Generate PR Summary</button>
+            <div id="git-pr-summary" class="info-block"></div>
           </div>
 
           <!-- Tests -->

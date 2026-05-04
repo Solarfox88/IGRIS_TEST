@@ -216,6 +216,13 @@ Routes tasks to the cheapest suitable provider:
 | `/api/patches/{id}/validate` | POST | Safety validation |
 | `/api/patches/{id}/apply` | POST | Apply validated patch |
 | `/api/patches/{id}/reject` | POST | Reject proposal |
+| `/api/git/diff` | GET | Working tree diff (secret-redacted) |
+| `/api/git/diff/stat` | GET | Diffstat summary |
+| `/api/git/branches` | GET | List local branches |
+| `/api/git/branch` | POST | Create branch (sanitized) |
+| `/api/git/safety-check` | GET | Pre-commit safety analysis |
+| `/api/git/commit-proposal` | POST | Commit proposal (no actual commit) |
+| `/api/git/pr-summary` | GET | PR summary vs base branch |
 
 ## Web Console
 
