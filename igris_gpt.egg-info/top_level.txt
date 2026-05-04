@@ -1,7 +1,0 @@
-a2a
-agents
-cli
-core
-layers
-models
-web

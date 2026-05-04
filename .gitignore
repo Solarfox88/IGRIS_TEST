@@ -36,3 +36,6 @@ $BACKUP_DIR/
 $CONFIG_BACKUP_FILE
 wordpress_backup_*
 wordpress_db_backup_*
+
+# Python build metadata
+*.egg-info/
