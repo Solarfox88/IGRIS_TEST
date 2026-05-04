@@ -22,6 +22,7 @@ from igris.core.teacher import build_teacher_payload, validate_teacher_assignmen
 from igris.core import execution_report
 from igris.core.chat_engine import chat as chat_llm, check_ollama_available
 from igris.core import chat_streaming
+from igris.core import chat_context
 from igris.core.outcome_router import route_outcome
 from igris.core import patch_proposal as patch_mod
 from igris.layers.advisory import router as provider_router
@@ -142,6 +143,7 @@ def create_app() -> FastAPI:
         content = await request.json()
         message = content.get("message", "")
         session_id = content.get("session_id")
+        enrich = content.get("enrich", False)
         if not message:
             raise HTTPException(status_code=400, detail="message required")
 
@@ -149,8 +151,15 @@ def create_app() -> FastAPI:
         if session_id and session_id in sessions:
             history = sessions[session_id]
 
+        system_prompt = None
+        if enrich:
+            system_prompt = chat_context.build_context_system_prompt(
+                task_engine=task_engine,
+                project_root=str(CONFIG.project_root),
+            )
+
         chunks = chat_streaming.chat_stream_sync(
-            message=message, history=history,
+            message=message, history=history, system_prompt=system_prompt,
         )
 
         # Store in session if provided
@@ -174,6 +183,20 @@ def create_app() -> FastAPI:
             event_generator(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/api/chat/context")
+    async def api_chat_context() -> Dict[str, object]:
+        return chat_context.build_chat_context(
+            task_engine=task_engine,
+            project_root=str(CONFIG.project_root),
+        )
+
+    @app.get("/api/chat/context/summary")
+    async def api_chat_context_summary() -> Dict[str, object]:
+        return chat_context.get_context_summary(
+            task_engine=task_engine,
+            project_root=str(CONFIG.project_root),
         )
 
     @app.get("/api/chat/tiers")

@@ -264,9 +264,11 @@ Routes tasks to the cheapest suitable provider:
 | `/api/decision-reports` | GET | List recent decision reports |
 | `/api/decision-reports/{id}` | GET | Get specific decision report |
 | `/api/decision-reports` | POST | Create decision report for loop step |
-| `/api/chat/stream` | POST | SSE streaming chat response |
+| `/api/chat/stream` | POST | SSE streaming chat (with optional context enrichment) |
 | `/api/chat/tiers` | GET | Tier availability and current tier |
 | `/api/chat/tiers` | POST | Set session tier (auto/local/fallback) |
+| `/api/chat/context` | GET | Full project context for chat enrichment |
+| `/api/chat/context/summary` | GET | Concise context summary |
 | `/api/diagnostics` | GET | Full operational diagnostics report |
 | `/api/diagnostics/summary` | GET | Quick diagnostics summary |
 
@@ -347,6 +349,7 @@ See [docs/SYSTEMD_SERVICE.md](docs/SYSTEMD_SERVICE.md) for production deployment
 - [PROJECT_STATE_COOLDOWN.md](docs/PROJECT_STATE_COOLDOWN.md)
 - [DECISION_REPORTS.md](docs/DECISION_REPORTS.md)
 - [CHAT_STREAMING.md](docs/CHAT_STREAMING.md)
+- [CONTEXT_ENRICHED_CHAT.md](docs/CONTEXT_ENRICHED_CHAT.md)
 
 ## License
 
