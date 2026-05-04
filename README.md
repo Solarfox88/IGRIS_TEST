@@ -237,6 +237,10 @@ Routes tasks to the cheapest suitable provider:
 | `/api/loop/run` | POST | Run N loop steps (max_steps required) |
 | `/api/loop/status` | GET | Current loop status |
 | `/api/loop/recent` | GET | Recent loop step results |
+| `/api/tasks/{id}/validate` | POST | Validate task against success criteria |
+| `/api/tasks/{id}/validations` | GET | List validations for a task |
+| `/api/validations/{id}` | GET | Get specific validation result |
+| `/api/tasks/{id}/complete` | POST | Complete task (requires validation or manual reason) |
 
 ## Web Console
 
