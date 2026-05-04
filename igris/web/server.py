@@ -38,6 +38,7 @@ from igris.core.project_context import build_project_snapshot
 from igris.core.memory import recent_memory_events, append_memory_event
 from igris.core import mission_planner
 from igris.core import decision_memory
+from igris.core import diagnostics as diagnostics_mod
 from igris.core import autonomous_loop
 from igris.layers.validation import validator as task_validator
 
@@ -796,6 +797,25 @@ def create_app() -> FastAPI:
         from igris.agents import list_capabilities
         caps = list_capabilities()
         return {"capabilities": [{"id": c.id, "name": c.name, "description": c.description, "safe": c.safe, "risk": c.risk} for c in caps]}
+
+    # ---- Diagnostics ----
+
+    @app.get("/api/diagnostics")
+    async def api_diagnostics() -> Dict[str, object]:
+        tasks = [t.to_dict() for t in task_engine.list_tasks()]
+        timeline = task_engine.recent_timeline_events(limit=50)
+        report = diagnostics_mod.run_diagnostics(
+            tasks, timeline, project_root=str(CONFIG.project_root),
+        )
+        return report.to_dict()
+
+    @app.get("/api/diagnostics/summary")
+    async def api_diagnostics_summary() -> Dict[str, object]:
+        tasks = [t.to_dict() for t in task_engine.list_tasks()]
+        timeline = task_engine.recent_timeline_events(limit=50)
+        return diagnostics_mod.get_diagnostic_summary(
+            tasks, timeline, project_root=str(CONFIG.project_root),
+        )
 
     # ---- A2A Task Store (artifacts, events, cancel) ----
 
