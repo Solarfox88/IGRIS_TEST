@@ -104,7 +104,7 @@ deterministic responses that help navigate IGRIS capabilities.
 ## Tests
 
 ```bash
-python -m pytest -q     # 77 tests
+python -m pytest -q     # 393 tests
 ```
 
 ---
@@ -256,40 +256,53 @@ Routes tasks to the cheapest suitable provider:
 
 ## Web Console
 
-12-tab agentic console:
+14-tab agentic console:
 - **Mission Control** — health, readiness, project context (auto-refresh)
 - **Terminal** — safe command execution by ID
 - **Files** — file tree and preview
-- **Git** — branch, dirty status
+- **Git** — diff viewer, branch management, safety check, commit proposals, PR summary
 - **Tests** — run pytest with output
 - **Logs** — application log viewer
 - **Agent** — timeline events with type/severity (auto-refresh)
 - **Tasks** — create/complete/block tasks + teacher remediation
-- **Safety** — anti-loop status + execution reports
-- **Cost** — routing history with latency and provider details
-- **A2A** — agent card and capabilities
+- **Safety** — anti-loop status + execution reports (unified refresh)
+- **Cost** — provider availability cards, budget bar, route estimate, cost summary (auto-refresh)
+- **A2A** — agent card, capabilities, A2A store tasks
+- **Memory** — decision/failure memory, constraints, record events
+- **Loop** — autonomous execution loop controls (1/3/5 steps), status, recent steps (auto-refresh)
 - **Patches** — propose, validate, diff preview, apply/reject code changes
 
-## What Works
+## What Works (v0.2)
 
-- Full FastAPI backend with all endpoints
+- Full FastAPI backend with 55+ endpoints
 - Ollama chat engine with deterministic fallback
 - Persistent task engine and execution reports
 - Safety module: path access, secret detection, output truncation
-- A2A protocol: agent card, task lifecycle, messages
+- A2A protocol: agent card, task lifecycle, messages, artifacts, cancel, events
 - Teacher governance with remediation proposals
 - Outcome router with recommendations
 - Anti-loop heuristics with family saturation
-- Cost-aware routing with latency tracking
-- 77 passing tests
+- Cost-aware routing with latency tracking, budget management
+- Patch proposals: propose, validate, diff preview, apply/reject
+- Controlled git workflow: diff, branches, safety check, commit proposals, PR summary
+- Mission planner: create missions, generate plans, materialize tasks, dependency graph
+- Decision/failure memory: record, query, constraints, teacher/task_selection integration
+- Autonomous execution loop: safety-first semi-autonomous step execution
+- Validation layer: success criteria, definition of done, manual override
+- A2A store: extended status lifecycle, artifacts, cancel, events
+- Provider availability checks, route estimation, per-session budget tracking
+- Mobile-responsive UI with 14 tabs and auto-refresh
+- 393 passing tests
 - Ubuntu install scripts with lifecycle management
 - Systemd service example
 
 ## What's Placeholder
 
-- VAST.ai integration (routing logic present, no real API calls)
-- Auto-execution of outcome router recommendations
+- VAST.ai integration (routing logic present, no real API calls or provisioning)
+- LLM-based mission planning (currently deterministic keyword-based)
+- LLM-based memory analysis
 - WebSocket live updates
+- Memory cleanup/archival
 
 ## Systemd Service
 
@@ -301,10 +314,18 @@ See [docs/SYSTEMD_SERVICE.md](docs/SYSTEMD_SERVICE.md) for production deployment
 - [TASK_ENGINE.md](docs/TASK_ENGINE.md)
 - [TEACHER_GOVERNANCE.md](docs/TEACHER_GOVERNANCE.md)
 - [A2A_READY_ARCHITECTURE.md](docs/A2A_READY_ARCHITECTURE.md)
+- [A2A_ARTIFACTS_LONG_RUNNING.md](docs/A2A_ARTIFACTS_LONG_RUNNING.md)
 - [AGENT_CONTRACT.md](docs/AGENT_CONTRACT.md)
 - [SYSTEMD_SERVICE.md](docs/SYSTEMD_SERVICE.md)
 - [INSTALLATION_VERIFICATION.md](docs/INSTALLATION_VERIFICATION.md)
 - [OPERATIONAL_BASELINE.md](docs/OPERATIONAL_BASELINE.md)
+- [PATCH_PROPOSAL_WORKFLOW.md](docs/PATCH_PROPOSAL_WORKFLOW.md)
+- [GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md)
+- [MISSION_PLANNER.md](docs/MISSION_PLANNER.md)
+- [DECISION_MEMORY.md](docs/DECISION_MEMORY.md)
+- [AUTONOMOUS_LOOP.md](docs/AUTONOMOUS_LOOP.md)
+- [VALIDATION_MODEL.md](docs/VALIDATION_MODEL.md)
+- [COST_ROUTING.md](docs/COST_ROUTING.md)
 
 ## License
 
