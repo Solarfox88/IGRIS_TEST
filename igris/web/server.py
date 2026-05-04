@@ -829,15 +829,36 @@ def create_app() -> FastAPI:
         return _redact_mission_dict(m.to_dict())
 
     @app.post("/api/missions/{mission_id}/plan")
-    async def api_plan_mission(mission_id: str) -> Dict[str, object]:
-        m = mission_planner.plan_mission(mission_id, project_root=str(CONFIG.project_root))
-        if not m:
+    async def api_plan_mission(
+        mission_id: str,
+        mode: str = "deterministic",
+    ) -> Dict[str, object]:
+        from igris.core import llm_planner
+        if mode not in ("deterministic", "llm", "auto"):
+            raise HTTPException(status_code=400, detail="Invalid mode. Use: deterministic, llm, auto")
+        result = llm_planner.plan_mission_with_mode(
+            mission_id, mode=mode, project_root=str(CONFIG.project_root),
+        )
+        if not result:
             raise HTTPException(status_code=404, detail="Mission not found")
         task_engine.append_timeline_event({
-            "type": "mission", "title": f"Mission planned: {_redact(m.title)}",
-            "detail": f"{len(m.steps)} steps", "severity": "info",
+            "type": "mission",
+            "title": f"Mission planned ({result['planning']['mode']}): {_redact(result['mission'].get('title', ''))}",
+            "detail": f"{len(result['mission'].get('steps', []))} steps",
+            "severity": "info",
         })
-        return _redact_mission_dict(m.to_dict())
+        result["mission"] = _redact_mission_dict(result["mission"])
+        return result
+
+    @app.get("/api/missions/{mission_id}/plan/explain")
+    async def api_plan_explain(mission_id: str) -> Dict[str, object]:
+        from igris.core import llm_planner
+        explanation = llm_planner.explain_plan(
+            mission_id, project_root=str(CONFIG.project_root),
+        )
+        if not explanation:
+            raise HTTPException(status_code=404, detail="Mission not found")
+        return explanation
 
     @app.post("/api/missions/{mission_id}/materialize-tasks")
     async def api_materialize_tasks(mission_id: str) -> Dict[str, object]:

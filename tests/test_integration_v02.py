@@ -110,7 +110,9 @@ class TestMissionPlanner:
         mid = r.json()["id"]
         r = client.post(f"/api/missions/{mid}/plan")
         assert r.status_code == 200
-        assert len(r.json()["steps"]) > 0
+        data = r.json()
+        mission = data.get("mission", data)
+        assert len(mission["steps"]) > 0
         r = client.post(f"/api/missions/{mid}/materialize-tasks")
         assert r.status_code == 200
         assert len(r.json().get("task_ids", [])) > 0
