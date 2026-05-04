@@ -42,6 +42,12 @@ class LLMConfig(BaseModel):
 
 class VastAIConfig(BaseModel):
     api_key: Optional[str] = None
+    model: str = "deepseek-r1:32b"
+    fallback_model: str = "qwen2.5-coder:7b"
+    auto_provision: bool = False
+    require_approval: bool = True
+    max_hourly_cost: float = 0.50
+    mode: str = "on_demand"  # on_demand | always_on | disabled
 
 
 class Config(BaseModel):
@@ -66,7 +72,15 @@ class Config(BaseModel):
             model=normalize_model_name(os.getenv("FALLBACK_LLM_MODEL", "gpt-4o-mini")),
             api_key=os.getenv("OPENAI_API_KEY"),
         )
-        vastai = VastAIConfig(api_key=os.getenv("VASTAI_API_KEY"))
+        vastai = VastAIConfig(
+            api_key=os.getenv("VASTAI_API_KEY"),
+            model=os.getenv("VASTAI_MODEL", "deepseek-r1:32b"),
+            fallback_model=os.getenv("VASTAI_FALLBACK_MODEL", "qwen2.5-coder:7b"),
+            auto_provision=os.getenv("VASTAI_AUTO_PROVISION", "false").lower() == "true",
+            require_approval=os.getenv("VASTAI_REQUIRE_APPROVAL", "true").lower() != "false",
+            max_hourly_cost=float(os.getenv("VASTAI_MAX_HOURLY_COST", "0.50")),
+            mode=os.getenv("VASTAI_MODE", "on_demand"),
+        )
         auto_commit = os.getenv("AUTO_COMMIT", "false").lower() == "true"
         auto_push = os.getenv("AUTO_PUSH", "false").lower() == "true"
         return cls(

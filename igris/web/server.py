@@ -345,6 +345,73 @@ def create_app() -> FastAPI:
     async def api_github_pr_status() -> Dict[str, object]:
         return gh_wf.get_pr_status()
 
+    # ---- Vast.ai (gated) ----
+
+    from igris.layers.advisory.vastai_manager import VastAIManager
+    vastai_mgr = VastAIManager()
+
+    @app.get("/api/vastai/config")
+    async def api_vastai_config() -> Dict[str, object]:
+        return vastai_mgr.get_config()
+
+    @app.get("/api/vastai/status")
+    async def api_vastai_status() -> Dict[str, object]:
+        return vastai_mgr.get_status()
+
+    @app.post("/api/vastai/estimate")
+    async def api_vastai_estimate(request: Request) -> Dict[str, object]:
+        content = await request.json()
+        model = content.get("model")
+        hours = content.get("hours", 1.0)
+        return vastai_mgr.estimate_cost(model=model, hours=hours)
+
+    @app.post("/api/vastai/offers/search")
+    async def api_vastai_offers_search(request: Request) -> Dict[str, object]:
+        content = await request.json()
+        model = content.get("model")
+        max_cost = content.get("max_cost")
+        result = vastai_mgr.search_offers(model=model, max_cost=max_cost)
+        return result.to_dict()
+
+    @app.post("/api/vastai/provision")
+    async def api_vastai_provision(request: Request) -> Dict[str, object]:
+        content = await request.json()
+        approval = content.get("approval", "")
+        model = content.get("model")
+        offer_id = content.get("offer_id")
+        result = vastai_mgr.provision(
+            approval=approval, model=model, offer_id=offer_id,
+        )
+        task_engine.append_timeline_event({
+            "type": "vastai",
+            "title": f"Provision: {'OK (mock)' if result.get('success') else 'blocked'}",
+            "detail": result.get("note", result.get("error", "")),
+            "severity": "info" if result.get("success") else "warning",
+        })
+        return result
+
+    @app.post("/api/vastai/destroy")
+    async def api_vastai_destroy(request: Request) -> Dict[str, object]:
+        content = await request.json()
+        approval = content.get("approval", "")
+        result = vastai_mgr.destroy(approval=approval)
+        task_engine.append_timeline_event({
+            "type": "vastai",
+            "title": f"Destroy: {'OK (mock)' if result.get('success') else 'blocked'}",
+            "detail": result.get("note", result.get("error", "")),
+            "severity": "info" if result.get("success") else "warning",
+        })
+        return result
+
+    @app.post("/api/vastai/set-mode")
+    async def api_vastai_set_mode(request: Request) -> Dict[str, object]:
+        content = await request.json()
+        mode = content.get("mode", "")
+        approval = content.get("approval", "")
+        if not mode:
+            raise HTTPException(status_code=400, detail="Mode required")
+        return vastai_mgr.set_mode(mode=mode, approval=approval)
+
     # ---- Routing / Cost ----
 
     @app.get("/api/routing/history")
