@@ -829,6 +829,70 @@
     }
   })();
 
+  // ---- Loop ----
+  async function loadLoopStatus() {
+    var sEl = $("#loop-status");
+    var rEl = $("#loop-recent");
+    var sr = await api("GET", "/api/loop/status");
+    if (sr.ok && sEl) {
+      var s = sr.data;
+      var h = "<strong>Running:</strong> " + (s.running ? "Yes" : "No");
+      h += " | <strong>Steps:</strong> " + (s.steps_completed || 0) + "/" + (s.max_steps || 0);
+      if (s.stopped_reason) h += '<br><span class="task-status blocked">' + esc(s.stopped_reason) + "</span>";
+      if (s.started_at) h += "<br><small>Started: " + esc(s.started_at) + "</small>";
+      if (s.finished_at) h += " <small>Finished: " + esc(s.finished_at) + "</small>";
+      sEl.innerHTML = h;
+    }
+    var rr = await api("GET", "/api/loop/recent?limit=10");
+    if (rr.ok && rEl) {
+      var steps = rr.data.steps || [];
+      if (!steps.length) { rEl.innerHTML = "<em>No steps executed yet</em>"; }
+      else {
+        var h2 = "";
+        steps.forEach(function (s) {
+          h2 += '<div class="info-block" style="margin:.2rem 0;padding:.3rem .5rem">';
+          h2 += "<strong>#" + s.step_number + "</strong> ";
+          h2 += statusBadge(s.outcome || "pending") + " ";
+          h2 += esc(s.action_type || "") + " ";
+          if (s.task_title) h2 += "— " + esc(s.task_title);
+          if (s.action_detail) h2 += "<br><small>" + esc(s.action_detail) + "</small>";
+          if (s.reason) h2 += "<br><small>" + esc(s.reason) + "</small>";
+          h2 += "</div>";
+        });
+        rEl.innerHTML = h2;
+      }
+    }
+  }
+
+  async function runLoopSteps(n) {
+    var sEl = $("#loop-status");
+    if (sEl) sEl.innerHTML = '<span class="loading">Running ' + n + ' step(s)...</span>';
+    var r;
+    if (n === 1) {
+      r = await api("POST", "/api/loop/step");
+    } else {
+      r = await api("POST", "/api/loop/run", { max_steps: n });
+    }
+    loadLoopStatus();
+  }
+
+  (function () {
+    var loaded = false;
+    $$('.tab[data-tab="loop"]').forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (!loaded) { loaded = true; loadLoopStatus(); }
+      });
+    });
+    var refreshBtn = $("#btn-refresh-loop");
+    if (refreshBtn) refreshBtn.addEventListener("click", loadLoopStatus);
+    var stepBtn = $("#btn-loop-step");
+    if (stepBtn) stepBtn.addEventListener("click", function () { runLoopSteps(1); });
+    var run3Btn = $("#btn-loop-run3");
+    if (run3Btn) run3Btn.addEventListener("click", function () { runLoopSteps(3); });
+    var run5Btn = $("#btn-loop-run5");
+    if (run5Btn) run5Btn.addEventListener("click", function () { runLoopSteps(5); });
+  })();
+
   // ---- Patches ----
   (function () {
     var loaded = false;

@@ -40,6 +40,7 @@
           <button type="button" class="tab" data-tab="cost" role="tab" aria-label="Cost">Cost</button>
           <button type="button" class="tab" data-tab="a2a" role="tab" aria-label="A2A">A2A</button>
           <button type="button" class="tab" data-tab="memory" role="tab" aria-label="Memory">Memory</button>
+          <button type="button" class="tab" data-tab="loop" role="tab" aria-label="Loop">Loop</button>
           <button type="button" class="tab" data-tab="patches" role="tab" aria-label="Patches">Patches</button>
         </nav>
 
@@ -191,6 +192,21 @@
               <textarea id="memory-event-desc" placeholder="Description" aria-label="Description"></textarea>
               <button type="submit" class="action-btn">Record Event</button>
             </form>
+          </div>
+
+          <!-- Loop -->
+          <div id="tab-loop" class="tab-pane" role="tabpanel">
+            <h3>Autonomous Loop</h3>
+            <div class="btn-group">
+              <button type="button" id="btn-loop-step" class="action-btn">Run 1 Step</button>
+              <button type="button" id="btn-loop-run3" class="action-btn">Run 3 Steps</button>
+              <button type="button" id="btn-loop-run5" class="action-btn">Run 5 Steps</button>
+              <button type="button" id="btn-refresh-loop" class="action-btn">Refresh Status</button>
+            </div>
+            <h4>Status</h4>
+            <div id="loop-status" class="info-block"></div>
+            <h4>Recent Steps</h4>
+            <div id="loop-recent" class="info-block"></div>
           </div>
 
           <!-- Patches -->

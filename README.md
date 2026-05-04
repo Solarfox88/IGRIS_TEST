@@ -233,6 +233,10 @@ Routes tasks to the cheapest suitable provider:
 | `/api/memory/failures` | GET | Recent failure events |
 | `/api/memory/saturation` | GET | Saturated families + constraints |
 | `/api/memory/events` | POST | Record decision/failure/saturation/remediation |
+| `/api/loop/step` | POST | Execute single loop step |
+| `/api/loop/run` | POST | Run N loop steps (max_steps required) |
+| `/api/loop/status` | GET | Current loop status |
+| `/api/loop/recent` | GET | Recent loop step results |
 
 ## Web Console
 

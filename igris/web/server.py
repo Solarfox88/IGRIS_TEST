@@ -37,6 +37,7 @@ from igris.core.project_context import build_project_snapshot
 from igris.core.memory import recent_memory_events, append_memory_event
 from igris.core import mission_planner
 from igris.core import decision_memory
+from igris.core import autonomous_loop
 
 MODULE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = MODULE_DIR / "templates"
@@ -423,6 +424,35 @@ def create_app() -> FastAPI:
             "severity": "info",
         })
         return event.to_dict()
+
+    # ---- Autonomous Loop ----
+
+    @app.post("/api/loop/step")
+    async def api_loop_step() -> Dict[str, object]:
+        result = autonomous_loop.execute_step(
+            task_engine, project_root=str(CONFIG.project_root),
+        )
+        return result.to_dict()
+
+    @app.post("/api/loop/run")
+    async def api_loop_run(request: Request) -> Dict[str, object]:
+        content = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        max_steps = content.get("max_steps", 1)
+        if not isinstance(max_steps, int) or max_steps < 1:
+            raise HTTPException(status_code=400, detail="max_steps must be a positive integer")
+        status = autonomous_loop.run_loop(
+            task_engine, max_steps=max_steps,
+            project_root=str(CONFIG.project_root),
+        )
+        return status.to_dict()
+
+    @app.get("/api/loop/status")
+    async def api_loop_status() -> Dict[str, object]:
+        return autonomous_loop.get_loop_status().to_dict()
+
+    @app.get("/api/loop/recent")
+    async def api_loop_recent(limit: int = 20) -> Dict[str, object]:
+        return {"steps": autonomous_loop.get_recent_steps(limit)}
 
     # ---- Missions ----
 
