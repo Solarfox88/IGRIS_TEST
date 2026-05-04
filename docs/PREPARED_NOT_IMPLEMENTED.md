@@ -4,13 +4,13 @@ This document tracks the IGRIS_GPT capabilities that are intentionally prepared,
 
 The goal is to make future work easy to rediscover and to avoid confusing an installable/safe baseline with a fully autonomous, cost-incurring, production-grade agent.
 
-Last updated: 2026-05-04 (v0.4-operationally-proven)
+Last updated: 2026-05-04 (v0.5-real-world-candidate)
 
 ---
 
 ## Current Baseline
 
-IGRIS_GPT v0.4 provides an installable, safety-first, operationally-proven engineering loop:
+IGRIS_GPT v0.5 provides an installable, safety-first, real-world-validated engineering loop:
 
 - Ubuntu install scripts and server lifecycle scripts
 - FastAPI backend with 80+ API endpoints
@@ -19,7 +19,9 @@ IGRIS_GPT v0.4 provides an installable, safety-first, operationally-proven engin
 - Mission planner with deterministic + LLM-based planning (safe schema)
 - Persistent task engine with explainable selection
 - Patch proposal, diff preview, validation and safe apply
+- **LLM patch generation (proposal-only, never auto-applies)**
 - Controlled Git workflow + gated GitHub PR workflow
+- **GitHub PR dry-run benchmark (full workflow without side effects)**
 - Decision/failure memory with LLM analysis
 - Autonomous loop MVP with bounded steps, diagnostics, decision reports
 - Validation/definition-of-done layer
@@ -30,8 +32,10 @@ IGRIS_GPT v0.4 provides an installable, safety-first, operationally-proven engin
 - ProjectState + saturation cooldown
 - Strict safety policy + safe command policy
 - Timeline/reports/safety/cost visibility
+- **Human acceptance verification (21-step checklist + automated script)**
+- **External repo sandbox benchmarks (5 scenarios on sandbox project)**
 - Operational benchmarks (5 workflow scenarios documented)
-- 804 tests passing
+- **928 tests passing**
 
 The sections below list the parts that are intentionally **not yet complete**.
 
@@ -67,44 +71,44 @@ When ready to incur real GPU costs. The gated framework is ready — only the HT
 
 ## 2. Intelligent Patch Generation (LLM-based)
 
-### Current state
+### Implemented in v0.5 (Sprint 28)
 
-Patch proposals, diff preview, validation and safe apply are fully functional. The workflow is controlled and safe.
+- LLM patch generation module (`igris/core/llm_patch_generator.py`)
+- Endpoints: `POST /api/patches/generate`, `POST /api/tasks/{id}/generate-patch`
+- Schema-validated JSON output
+- Path/content/secret validation
+- Deterministic fallback when LLM unavailable
+- `proposal_only: true` flag — never auto-applies
+- 44 tests
 
 ### Not fully implemented yet
 
-- Robust LLM-generated patches from arbitrary natural language goals
-- Multi-file patch planning
-- Patch self-review
+- Robust multi-file patch planning from complex goals
+- Patch self-review / quality scoring
 - Automatic repair after failing tests
 - Rollback strategy
 - Semantic diff explanation
 - Confidence scoring
 
-### Recommended approach
-
-Keep the current safe workflow, add an LLM proposal generator:
-
-`mission/task → LLM patch draft → patch proposal → validation → diff review → gated apply`
-
 ---
 
 ## 3. Real-Task Benchmark Hardening
 
-### Implemented in v0.4 (Sprint 20)
+### Implemented in v0.5 (Sprints 20, 27, 29)
 
-- 5 operational benchmarks documented (docs-only, bugfix, test failure recovery, multi-file, full loop smoke)
-- Deterministic/mock-based — no LLM fragility
-- `tests/test_operational_benchmark.py` with E2E workflow verification
+- 5 operational benchmarks (docs-only, bugfix, test failure, multi-file, full loop) — Sprint 20
+- External repo sandbox benchmarks (5 scenarios: bugfix, test repair, docs, refactor, multi-file) — Sprint 27
+- GitHub PR dry-run benchmark (full workflow without side effects) — Sprint 29
+- Human acceptance verification (21-step checklist) — Sprint 26
+- All deterministic/mock-based — no LLM fragility
 
 ### Not fully implemented yet
 
-- Benchmark suite on real external repositories
-- Repeated bugfix/feature/refactor tasks on real codebases
-- Scoring of patch quality
-- Regression tracking across versions
+- Benchmarks on real public repositories (network dependencies)
+- Scoring of patch quality across versions
+- Regression tracking
 - Comparison between local/fallback/Vast models
-- Automated benchmark runner with reporting
+- Automated benchmark runner with reporting dashboard
 
 ---
 
@@ -161,12 +165,13 @@ A feature can be considered ready only when it has:
 
 ## Operational Interpretation
 
-A feature being listed here does **not** mean IGRIS_GPT is broken. It means the feature is not required for the current operationally-proven baseline, or it would be unsafe/costly to enable automatically.
+A feature being listed here does **not** mean IGRIS_GPT is broken. It means the feature is not required for the current real-world-validated baseline, or it would be unsafe/costly to enable automatically.
 
 IGRIS_GPT always remains operational without these advanced capabilities:
 
 - if Vast.ai real API is not connected, use local/fallback providers (gated mock works)
 - if LLM planning fails, deterministic planning takes over
+- if LLM patch generation fails, deterministic fallback returns safe placeholder
 - if streaming is unavailable, use non-streaming chat
 - if GitHub PR workflow is not approved, use commit/PR proposals
 - if memory analysis LLM is unavailable, deterministic analysis works
