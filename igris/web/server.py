@@ -1350,6 +1350,44 @@ def create_app() -> FastAPI:
         patches = patch_mod.list_patch_proposals(project_root=str(CONFIG.project_root))
         return {"patches": patches}
 
+    @app.post("/api/patches/generate")
+    async def api_generate_patch(request: Request) -> Dict[str, object]:
+        from igris.core import llm_patch_generator
+        content = await request.json()
+        task_title = content.get("title", content.get("task_title", ""))
+        if not task_title:
+            raise HTTPException(status_code=400, detail="title is required")
+        result = llm_patch_generator.generate_patch(
+            task_title=task_title,
+            task_description=content.get("description", ""),
+            context=content.get("context", ""),
+        )
+        task_engine.append_timeline_event({
+            "type": "patch", "title": f"Patch generated: {task_title[:80]}",
+            "detail": f"by={result.get('generated_by', 'unknown')}, files={len(result.get('files', []))}",
+            "severity": "info",
+        })
+        return result
+
+    @app.post("/api/tasks/{task_id}/generate-patch")
+    async def api_task_generate_patch(task_id: int) -> Dict[str, object]:
+        from igris.core import llm_patch_generator
+        task = task_engine.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        td = task.to_dict() if hasattr(task, "to_dict") else {}
+        result = llm_patch_generator.generate_patch(
+            task_title=td.get("title", ""),
+            task_description=td.get("description", ""),
+        )
+        result["task_id"] = task_id
+        task_engine.append_timeline_event({
+            "type": "patch", "title": f"Patch generated for task: {task_id}",
+            "detail": f"by={result.get('generated_by', 'unknown')}",
+            "severity": "info",
+        })
+        return result
+
     @app.post("/api/patches/propose")
     async def api_propose_patch(request: Request) -> Dict[str, object]:
         content = await request.json()
