@@ -125,9 +125,45 @@ header h1{margin:0;font-size:1.2rem;font-weight:700;letter-spacing:.5px}
 .patch-status.applied{background:#0d2818;color:#2ea043}
 .patch-status.rejected{background:#2d0000;color:#f85149}
 
+/* Status indicator */
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
+.status-dot.ok{background:#3fb950}
+.status-dot.warn{background:#d29922}
+.status-dot.off{background:#f85149}
+
+/* Provider card */
+.provider-card{display:inline-flex;align-items:center;gap:.4rem;background:#21262d;border:1px solid #30363d;border-radius:6px;padding:.3rem .6rem;margin:.2rem;font-size:.78rem}
+
+/* Budget bar */
+.budget-bar{height:6px;background:#21262d;border-radius:3px;margin:.4rem 0;overflow:hidden}
+.budget-fill{height:100%;border-radius:3px;transition:width .3s}
+.budget-fill.ok{background:#3fb950}
+.budget-fill.warn{background:#d29922}
+.budget-fill.exceeded{background:#f85149}
+
+/* Auto-refresh indicator */
+.auto-refresh-badge{font-size:.65rem;color:#8b949e;margin-left:.5rem}
+
 /* Responsive */
 @media(max-width:768px){
   .layout{flex-direction:column}
-  .chat-panel{width:100%;height:200px;min-width:auto;border-right:none;border-bottom:1px solid #30363d}
-  .tab-bar{overflow-x:auto;flex-wrap:nowrap}
+  .chat-panel{width:100%;height:180px;min-width:auto;border-right:none;border-bottom:1px solid #30363d}
+  .tab-bar{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
+  .tab{white-space:nowrap;flex-shrink:0;padding:.5rem .5rem;font-size:.72rem}
+  .tab-content{padding:.5rem}
+  .console-panel{min-height:0}
+  .info-block{font-size:.78rem}
+  .btn-group{flex-wrap:wrap}
+  .action-btn{font-size:.78rem;padding:.35rem .6rem}
+  .inline-form{flex-direction:column}
+  .inline-form input,.inline-form button{width:100%}
+  .patch-form input,.patch-form select,.patch-form textarea{font-size:.78rem}
+  header h1{font-size:1rem}
+  .output-box{max-height:250px;font-size:.75rem}
+}
+
+@media(max-width:480px){
+  .chat-panel{height:150px}
+  header{padding:.5rem}
+  .tab{padding:.4rem .35rem;font-size:.68rem}
 }

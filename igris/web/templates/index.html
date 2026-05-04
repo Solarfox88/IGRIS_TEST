@@ -113,7 +113,9 @@
           <!-- Tests -->
           <div id="tab-tests" class="tab-pane" role="tabpanel">
             <h3>Test Runner</h3>
-            <button type="button" id="btn-run-tests" class="action-btn" aria-label="Run tests">Run Tests</button>
+            <div class="btn-group">
+              <button type="button" id="btn-run-tests" class="action-btn" aria-label="Run tests">Run Tests</button>
+            </div>
             <pre id="test-output" class="output-box"></pre>
           </div>
 
@@ -148,25 +150,41 @@
           <!-- Safety -->
           <div id="tab-safety" class="tab-pane" role="tabpanel">
             <h3>Safety Status</h3>
+            <button type="button" id="btn-refresh-safety" class="action-btn" aria-label="Refresh safety">Refresh</button>
             <div id="safety-info" class="info-block"><span class="loading">Loading...</span></div>
             <h4>Execution Reports</h4>
-            <button type="button" id="btn-refresh-reports" class="action-btn" aria-label="Refresh reports">Refresh Reports</button>
             <div id="reports-list" class="info-block"></div>
           </div>
 
           <!-- Cost -->
           <div id="tab-cost" class="tab-pane" role="tabpanel">
             <h3>Cost &amp; Routing</h3>
+            <div class="btn-group">
+              <button type="button" id="btn-refresh-cost" class="action-btn" aria-label="Refresh cost">Refresh</button>
+              <button type="button" id="btn-estimate-route" class="action-btn" aria-label="Estimate route">Estimate Route</button>
+            </div>
+            <h4>Provider Availability</h4>
+            <div id="cost-availability" class="info-block"></div>
+            <h4>Budget Status</h4>
+            <div id="cost-budget" class="info-block"></div>
+            <h4>Cost Summary</h4>
             <div id="cost-summary" class="info-block"></div>
-            <div id="routing-history" class="info-block"></div>
+            <h4>Route Estimate</h4>
+            <div id="cost-estimate" class="info-block"></div>
+            <h4>Routing Explanation</h4>
             <div id="routing-explain" class="info-block"></div>
           </div>
 
           <!-- A2A -->
           <div id="tab-a2a" class="tab-pane" role="tabpanel">
             <h3>A2A Protocol</h3>
+            <button type="button" id="btn-refresh-a2a" class="action-btn" aria-label="Refresh A2A">Refresh</button>
+            <h4>Agent Card</h4>
             <div id="a2a-card" class="info-block"></div>
+            <h4>Capabilities</h4>
             <div id="a2a-capabilities" class="info-block"></div>
+            <h4>A2A Tasks</h4>
+            <div id="a2a-tasks" class="info-block"></div>
           </div>
 
           <!-- Memory -->

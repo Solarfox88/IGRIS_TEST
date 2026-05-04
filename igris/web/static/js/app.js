@@ -53,11 +53,15 @@
     loadStatus();
     loadMission();
 
-    // Auto-refresh Mission Control and Timeline every 15s
+    // Auto-refresh active tab every 15s (lightweight)
     setInterval(function () {
       var activeTab = $(".tab.active");
-      if (activeTab && activeTab.dataset.tab === "mission") loadMission();
-      if (activeTab && activeTab.dataset.tab === "agent") loadTimeline();
+      if (!activeTab) return;
+      var tab = activeTab.dataset.tab;
+      if (tab === "mission") loadMission();
+      else if (tab === "agent") loadTimeline();
+      else if (tab === "loop") { if (typeof loadLoopStatus === "function") loadLoopStatus(); }
+      else if (tab === "cost") loadCost();
     }, 15000);
   });
 
@@ -564,6 +568,8 @@
     $$('.tab[data-tab="safety"]').forEach(function (btn) {
       btn.addEventListener("click", loadSafety);
     });
+    var refreshBtn = $("#btn-refresh-safety");
+    if (refreshBtn) refreshBtn.addEventListener("click", loadSafety);
   })();
 
   async function loadSafety() {
@@ -581,6 +587,7 @@
       }
       $("#safety-info").innerHTML = html;
     }
+    loadReports();
   }
 
   // Cost
@@ -588,31 +595,76 @@
     $$('.tab[data-tab="cost"]').forEach(function (btn) {
       btn.addEventListener("click", loadCost);
     });
+    var refreshBtn = $("#btn-refresh-cost");
+    if (refreshBtn) refreshBtn.addEventListener("click", loadCost);
+    var estBtn = $("#btn-estimate-route");
+    if (estBtn) estBtn.addEventListener("click", loadRouteEstimate);
   })();
 
   async function loadCost() {
+    // Availability
+    var av = await api("GET", "/api/routing/availability");
+    if (av.ok) {
+      var d = av.data;
+      var html = "";
+      var providers = ["ollama", "openai", "vastai"];
+      providers.forEach(function (p) {
+        var info = d[p] || {};
+        var dot = info.available ? "ok" : "off";
+        html += '<div class="provider-card"><span class="status-dot ' + dot + '"></span>';
+        html += "<strong>" + esc(p) + "</strong>";
+        if (info.model) html += " <small>(" + esc(info.model) + ")</small>";
+        html += " <small>$" + (info.cost_per_call || 0) + "/call</small>";
+        if (info.auto_provision === false) html += " <small>[no auto]</small>";
+        html += "</div>";
+      });
+      $("#cost-availability").innerHTML = html;
+    }
+    // Budget
+    var bg = await api("GET", "/api/cost/budget");
+    if (bg.ok) {
+      var b = bg.data;
+      var pct = Math.min(b.usage_percent || 0, 100);
+      var cls = b.exceeded ? "exceeded" : b.warning ? "warn" : "ok";
+      var bhtml = '<div class="budget-bar"><div class="budget-fill ' + cls + '" style="width:' + pct + '%"></div></div>';
+      bhtml += "<small>$" + (b.spent || 0) + " / $" + (b.max_session_cost || 0) + " (" + pct + "%)</small>";
+      if (b.warning) bhtml += ' <span class="error"> Budget warning</span>';
+      $("#cost-budget").innerHTML = bhtml;
+    }
+    // Summary
     var s = await api("GET", "/api/cost/summary");
     if (s.ok) {
-      $("#cost-summary").innerHTML = "<strong>Cost Summary</strong>" + kvTable(s.data);
+      var sd = s.data;
+      $("#cost-summary").innerHTML = kvTable({
+        total_calls: sd.total_calls,
+        local_calls: sd.local_calls,
+        fallback_calls: sd.fallback_calls,
+        estimated_cost_total: "$" + sd.estimated_cost_total,
+        last_provider: sd.last_provider || "none",
+      });
     }
-    var h = await api("GET", "/api/routing/history");
-    if (h.ok) {
-      var hist = h.data.history || [];
-      if (hist.length) {
-        var html = "<strong>Routing History</strong><table><tr><th>Provider</th><th>Model</th><th>Reason</th><th>Latency</th></tr>";
-        hist.slice(-20).reverse().forEach(function (e) {
-          html += "<tr><td>" + esc(e.provider) + "</td><td>" + esc(e.model) +
-            "</td><td>" + esc(e.reason || "") + "</td><td>" + esc(e.latency_ms ? e.latency_ms + "ms" : "-") + "</td></tr>";
-        });
-        html += "</table>";
-        $("#routing-history").innerHTML = html;
-      } else {
-        $("#routing-history").innerHTML = "<em>No routing history yet.</em>";
-      }
-    }
+    // Explain
     var e = await api("GET", "/api/routing/explain");
     if (e.ok) {
-      $("#routing-explain").innerHTML = "<strong>Routing Explanation</strong><br>" + esc(e.data.explanation || "");
+      $("#routing-explain").innerHTML = esc(e.data.explanation || "No routing decision yet.");
+    }
+  }
+
+  async function loadRouteEstimate() {
+    var r = await api("POST", "/api/routing/estimate", {task_type: "chat", complexity: "low"});
+    if (r.ok) {
+      var d = r.data;
+      var html = kvTable({
+        recommended_provider: d.recommended_provider,
+        model: d.model,
+        reason: d.reason,
+        estimated_cost: "$" + d.estimated_cost,
+        budget_remaining: "$" + d.budget_remaining,
+        would_exceed_budget: d.would_exceed_budget,
+      });
+      $("#cost-estimate").innerHTML = html;
+    } else {
+      $("#cost-estimate").innerHTML = '<span class="error">Failed to estimate route</span>';
     }
   }
 
@@ -621,22 +673,41 @@
     $$('.tab[data-tab="a2a"]').forEach(function (btn) {
       btn.addEventListener("click", loadA2A);
     });
+    var refreshBtn = $("#btn-refresh-a2a");
+    if (refreshBtn) refreshBtn.addEventListener("click", loadA2A);
   })();
 
   async function loadA2A() {
     var card = await api("GET", "/.well-known/agent-card.json");
     if (card.ok) {
-      $("#a2a-card").innerHTML = "<strong>Agent Card</strong>" + kvTable(card.data);
+      $("#a2a-card").innerHTML = kvTable(card.data);
     }
     var caps = await api("GET", "/api/a2a/capabilities");
     if (caps.ok) {
       var list = caps.data.capabilities || [];
-      var h = "<strong>Capabilities</strong><table><tr><th>ID</th><th>Name</th><th>Risk</th><th>Safe</th></tr>";
+      var h = "<table><tr><th>ID</th><th>Name</th><th>Risk</th><th>Safe</th></tr>";
       list.forEach(function (c) {
         h += "<tr><td>" + esc(c.id) + "</td><td>" + esc(c.name) + "</td><td>" + esc(c.risk) + "</td><td>" + esc(c.safe) + "</td></tr>";
       });
       h += "</table>";
       $("#a2a-capabilities").innerHTML = h;
+    }
+    // A2A Store tasks
+    var tasks = await api("GET", "/api/a2a/store/tasks");
+    if (tasks.ok) {
+      var tl = tasks.data.tasks || [];
+      if (tl.length) {
+        var th = "<table><tr><th>ID</th><th>Title</th><th>Status</th></tr>";
+        tl.forEach(function (t) {
+          th += "<tr><td>" + esc(t.id) + "</td><td>" + esc(t.title || t.description || "") + "</td><td>" + statusBadge(t.status) + "</td></tr>";
+        });
+        th += "</table>";
+        $("#a2a-tasks").innerHTML = th;
+      } else {
+        $("#a2a-tasks").innerHTML = "<em>No A2A tasks.</em>";
+      }
+    } else {
+      $("#a2a-tasks").innerHTML = "<em>No A2A tasks.</em>";
     }
   }
 
@@ -724,11 +795,9 @@
     });
   })();
 
-  // Reports (in Safety tab)
+  // Reports (loaded with Safety tab)
   (function () {
-    var btn = $("#btn-refresh-reports");
-    if (!btn) return;
-    btn.addEventListener("click", loadReports);
+    // loadReports is called from loadSafety
   })();
 
   async function loadReports() {
