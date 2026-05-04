@@ -41,6 +41,7 @@ from igris.core import decision_memory
 from igris.core import diagnostics as diagnostics_mod
 from igris.core import safe_policy
 from igris.core import task_selection_explain
+from igris.core import project_state as project_state_mod
 from igris.core import autonomous_loop
 from igris.models.task import TaskStatus
 from igris.layers.validation import validator as task_validator
@@ -829,6 +830,32 @@ def create_app() -> FastAPI:
             project_root=str(CONFIG.project_root),
         )
         return explanation.to_dict()
+
+    # ---- Project State + Saturation Cooldown ----
+
+    @app.get("/api/project-state")
+    async def api_project_state() -> Dict[str, object]:
+        return project_state_mod.get_project_state(project_root=str(CONFIG.project_root))
+
+    @app.get("/api/project-state/recovery")
+    async def api_recovery_summary() -> Dict[str, object]:
+        return project_state_mod.get_recovery_summary(project_root=str(CONFIG.project_root))
+
+    @app.get("/api/project-state/family/{family}")
+    async def api_family_availability(family: str) -> Dict[str, object]:
+        return project_state_mod.is_family_available(family, project_root=str(CONFIG.project_root))
+
+    @app.post("/api/project-state/family/{family}/reset-cooldown")
+    async def api_reset_cooldown(family: str) -> Dict[str, object]:
+        ok = project_state_mod.reset_family_cooldown(family, project_root=str(CONFIG.project_root))
+        if not ok:
+            raise HTTPException(status_code=404, detail=f"Family '{family}' not found")
+        return {"family": family, "cooldown_reset": True}
+
+    @app.get("/api/project-state/fingerprints")
+    async def api_recent_fingerprints() -> Dict[str, object]:
+        fps = project_state_mod.get_recent_fingerprints(limit=20, project_root=str(CONFIG.project_root))
+        return {"fingerprints": fps}
 
     # ---- Diagnostics ----
 

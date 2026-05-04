@@ -256,6 +256,11 @@ Routes tasks to the cheapest suitable provider:
 | `/api/safety/policy` | GET | Safety policy config and status |
 | `/api/safety/policy/check` | POST | Check command against safety policy |
 | `/api/tasks/selection/explain` | GET | Explainable task selection with scores |
+| `/api/project-state` | GET | Full project state with family metrics |
+| `/api/project-state/recovery` | GET | Recovery summary with escalation |
+| `/api/project-state/family/{family}` | GET | Check family availability/cooldown |
+| `/api/project-state/family/{family}/reset-cooldown` | POST | Reset family cooldown |
+| `/api/project-state/fingerprints` | GET | Recent task fingerprints |
 | `/api/diagnostics` | GET | Full operational diagnostics report |
 | `/api/diagnostics/summary` | GET | Quick diagnostics summary |
 
@@ -333,6 +338,7 @@ See [docs/SYSTEMD_SERVICE.md](docs/SYSTEMD_SERVICE.md) for production deployment
 - [COST_ROUTING.md](docs/COST_ROUTING.md)
 - [OPERATIONAL_DIAGNOSTICS.md](docs/OPERATIONAL_DIAGNOSTICS.md)
 - [STRICT_SAFETY_EXPLAINABLE_SELECTION.md](docs/STRICT_SAFETY_EXPLAINABLE_SELECTION.md)
+- [PROJECT_STATE_COOLDOWN.md](docs/PROJECT_STATE_COOLDOWN.md)
 
 ## License
 
