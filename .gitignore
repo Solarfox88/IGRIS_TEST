@@ -1,0 +1,38 @@
+# Virtual environments and caches
+.venv/
+.venv_linux/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Application runtime artifacts
+.env
+.igris/
+conversations/
+bash_events/
+project/
+logs/
+.llm_cache/
+*.log
+
+# OS artifacts and temporary files
+*.bak
+*~
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Node / front‑end dependencies (if any)
+node_modules/
+
+# Exclude compiled assets and other build outputs
+build/
+dist/
+
+# Ignore secret or backup files
+$BACKUP_DIR/
+$CONFIG_BACKUP_FILE
+wordpress_backup_*
+wordpress_db_backup_*

@@ -1,0 +1,39 @@
+[project]
+name = "igris_gpt"
+version = "0.1.0"
+description = "Clean, installable AI engineering agent derived from the original IGRIS project."
+authors = [ { name = "Solarfox88", email = "" } ]
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Core runtime dependencies.  The backend relies on FastAPI for the HTTP API, Jinja2 for server side rendering
+# and pydantic for typed configuration models.  Aiofiles enables asynchronous file IO used by the
+# file preview endpoint.  Pytest and pytest-asyncio are used for the test suite.
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "jinja2",
+    "pydantic>=2.0",
+    "python-dotenv",
+    "aiofiles",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+    "pytest-cov",
+]
+
+[tool.setuptools]
+package-dir = { "" = "." }
+
+[tool.setuptools.packages.find]
+where = ["igris"]
+exclude = ["tests"]
+
+[tool.setuptools.package-data]
+"igris.web.templates" = ["*.html"]
+"igris.web.static.css" = ["*.css"]
+"igris.web.static.js" = ["*.js"]

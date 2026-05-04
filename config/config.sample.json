@@ -1,0 +1,19 @@
+{
+  "local_llm": {
+    "provider": "ollama",
+    "model": "phi4-mini",
+    "base_url": "http://127.0.0.1:11434"
+  },
+  "fallback_llm": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "api_key": null
+  },
+  "vastai": {
+    "api_key": null
+  },
+  "auto_commit": false,
+  "auto_push": false,
+  "workspace_root": "./workspace",
+  "project_root": "./project"
+}
