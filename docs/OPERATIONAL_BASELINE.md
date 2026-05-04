@@ -1,8 +1,8 @@
-# IGRIS_GPT Operational Baseline — v0.4
+# IGRIS_GPT Operational Baseline — v0.5
 
 Current state of the system and operational procedures.
 
-Tag: `v0.4-operationally-proven`
+Tag: `v0.5-real-world-candidate`
 
 ## What Works
 
@@ -126,7 +126,7 @@ pip install -e ".[dev]"
 ### Test
 ```bash
 python -m pytest -q
-# 804+ tests must pass
+# 928+ tests must pass
 ```
 
 ### Start
@@ -153,11 +153,11 @@ curl -s http://localhost:7778/api/status
 | Feature | Status | Notes |
 |---|---|---|
 | Vast.ai real API calls | Gated mock | Framework ready, HTTP transport not connected |
-| LLM patch generation | Not implemented | Patch workflow works, LLM draft not yet |
+| LLM patch generation | Proposal-only (v0.5) | Schema-validated, deterministic fallback |
 | WebSocket live updates | Not implemented | UI uses polling (15s auto-refresh) |
 | Vector search memory | Not implemented | Memory is JSON append |
 | Multi-repo management | Not implemented | Single project root |
-| Real external benchmarks | Not implemented | Internal benchmarks documented |
+| Real external benchmarks | Sandbox (v0.5) | 5 scenarios on sandbox project, PR dry-run |
 
 See `docs/PREPARED_NOT_IMPLEMENTED.md` for full details.
 
@@ -189,6 +189,7 @@ Created at first run, never committed:
 - `igris/core/project_state.py` — project state
 - `igris/core/decision_reports.py` — decision reports
 - `igris/core/autonomous_loop.py` — loop engine
+- `igris/core/llm_patch_generator.py` — LLM patch generation
 - `igris/layers/advisory/vastai_manager.py` — Vast.ai manager
 - `igris/web/templates/index.html` — UI HTML
 - `igris/web/static/js/app.js` — UI JavaScript
