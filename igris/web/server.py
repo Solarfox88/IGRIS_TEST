@@ -633,6 +633,27 @@ def create_app() -> FastAPI:
             "constraints": constraints,
         }
 
+    @app.post("/api/memory/analyze")
+    async def api_memory_analyze() -> Dict[str, object]:
+        from igris.core import memory_analysis
+        result = memory_analysis.analyze_memory(project_root=str(CONFIG.project_root))
+        task_engine.append_timeline_event({
+            "type": "memory", "title": "Memory analysis performed",
+            "detail": f"LLM enhanced: {result.get('llm_enhanced', False)}",
+            "severity": "info",
+        })
+        return result
+
+    @app.get("/api/memory/analysis")
+    async def api_memory_analysis_summary() -> Dict[str, object]:
+        from igris.core import memory_analysis
+        return memory_analysis.get_analysis_summary(project_root=str(CONFIG.project_root))
+
+    @app.get("/api/memory/lessons")
+    async def api_memory_lessons() -> Dict[str, object]:
+        from igris.core import memory_analysis
+        return memory_analysis.get_lessons_learned(project_root=str(CONFIG.project_root))
+
     @app.post("/api/memory/events")
     async def api_memory_record_event(request: Request) -> Dict[str, object]:
         content = await request.json()
