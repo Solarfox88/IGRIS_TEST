@@ -1,9 +1,77 @@
-# Cost Routing
+# Cost Router + VAST.ai Prep
 
-To keep operation affordable, IGRIS_GPT chooses between different language models depending on availability, cost and capability.
+## Overview
 
-1. **Local provider (Ollama)** – The default provider is a locally hosted model such as `phi4-mini`.  Responses are fast and incur no API cost but the model quality may be lower.
-2. **Fallback provider (OpenAI)** – When the local model cannot answer or the task requires higher accuracy, the agent falls back to a remote provider like OpenAI.  The API key must be supplied in the `.env` file.  The fallback model is only used when necessary.
-3. **Vast.ai** – For compute‑intensive tasks or when a high‑end GPU model is required, Vast.ai instances can be spun up.  This is not implemented in the MVP but the scaffolding exists in the configuration.
+Enhanced provider routing with availability checks, cost estimation, and budget management. No automatic cost-incurring actions.
 
-The `/api/routing/explain` endpoint reports which provider was used for recent interactions and why.  Future versions will implement automatic cost estimation and budget enforcement.
+## Providers
+
+| Provider | Cost/Call | Auto-Provision |
+|----------|-----------|----------------|
+| Ollama (local) | $0.00 | N/A (local) |
+| OpenAI (fallback) | ~$0.003 | No |
+| Vast.ai | ~$0.01 | **No** |
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/routing/availability` | Check provider availability |
+| `GET` | `/api/routing/explain` | Explain last routing decision |
+| `GET` | `/api/routing/history` | Full routing history |
+| `POST` | `/api/routing/estimate` | Estimate route + cost |
+| `GET` | `/api/cost/summary` | Cost summary with budget |
+| `GET` | `/api/cost/budget` | Current budget status |
+| `POST` | `/api/cost/budget` | Update budget config |
+
+### GET /api/routing/availability
+
+Returns availability status for each provider without exposing API keys:
+
+```json
+{
+  "ollama": {"available": true, "model": "phi4-mini", "cost_per_call": 0.0},
+  "openai": {"available": false, "key_present": false, "cost_per_call": 0.003},
+  "vastai": {"available": false, "key_present": false, "auto_provision": false}
+}
+```
+
+### POST /api/routing/estimate
+
+```json
+{"task_type": "chat", "complexity": "low"}
+```
+
+Response:
+```json
+{
+  "recommended_provider": "local",
+  "model": "phi4-mini",
+  "reason": "Local provider available and sufficient",
+  "estimated_cost": 0.0,
+  "budget_remaining": 10.0,
+  "would_exceed_budget": false,
+  "availability": {"ollama": true, "openai": false, "vastai": false}
+}
+```
+
+### POST /api/cost/budget
+
+```json
+{"max_session_cost": 5.0, "warn_threshold": 0.9}
+```
+
+## Budget System
+
+- Per-session cost tracking (not persistent across restarts)
+- Default budget: $10.00 per session
+- Warning at 80% usage (configurable)
+- Budget status included in cost summary
+
+## Safety
+
+- API keys never exposed in responses (only `key_present: bool`)
+- No automatic Vast.ai provisioning
+- No cost-incurring action by default
+- Budget warnings prevent runaway costs
+- Vast.ai `auto_provision` always `false`

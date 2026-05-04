@@ -249,6 +249,10 @@ Routes tasks to the cheapest suitable provider:
 | `/api/a2a/tasks/{id}/artifacts` | POST | Add artifact to task |
 | `/api/a2a/tasks/{id}/cancel` | POST | Cancel A2A task |
 | `/api/a2a/tasks/{id}/events` | GET | Get task events |
+| `/api/routing/availability` | GET | Check provider availability |
+| `/api/routing/estimate` | POST | Estimate route + cost |
+| `/api/cost/budget` | GET | Current budget status |
+| `/api/cost/budget` | POST | Update budget config |
 
 ## Web Console
 

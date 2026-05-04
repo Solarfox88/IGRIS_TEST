@@ -204,6 +204,29 @@ def create_app() -> FastAPI:
     async def api_routing_explain() -> Dict[str, str]:
         return {"explanation": provider_router.explain_routing()}
 
+    @app.get("/api/routing/availability")
+    async def api_routing_availability() -> Dict[str, object]:
+        return provider_router.check_availability()
+
+    @app.post("/api/routing/estimate")
+    async def api_routing_estimate(body: Dict[str, object] = Body(default={})) -> Dict[str, object]:
+        task_type = str(body.get("task_type", "chat")) if isinstance(body, dict) else "chat"
+        complexity = str(body.get("complexity", "low")) if isinstance(body, dict) else "low"
+        return provider_router.estimate_route(task_type=task_type, complexity=complexity)
+
+    @app.get("/api/cost/budget")
+    async def api_cost_budget() -> Dict[str, object]:
+        return provider_router.get_budget_status()
+
+    @app.post("/api/cost/budget")
+    async def api_cost_budget_update(body: Dict[str, object] = Body(...)) -> Dict[str, object]:
+        max_cost = body.get("max_session_cost")
+        warn = body.get("warn_threshold")
+        return provider_router.set_budget_config(
+            max_session_cost=float(max_cost) if max_cost is not None else None,
+            warn_threshold=float(warn) if warn is not None else None,
+        )
+
     # ---- Files ----
 
     @app.get("/api/files/tree")

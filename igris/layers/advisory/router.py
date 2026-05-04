@@ -26,6 +26,25 @@ _last_provider: Optional[Tuple[str, str]] = None
 # Each entry is a dict with provider, model and reason fields.
 _provider_history: List[Dict[str, Any]] = []
 
+# Budget configuration (per-session, not persistent)
+_budget_config: Dict[str, Any] = {
+    "max_session_cost": 10.0,  # USD
+    "warn_threshold": 0.8,  # warn at 80% of budget
+    "cost_per_local_call": 0.0,
+    "cost_per_fallback_call": 0.003,
+    "cost_per_vastai_call": 0.01,
+}
+
+# Estimated cost per provider per call (USD)
+COST_ESTIMATES: Dict[str, float] = {
+    "local": 0.0,
+    "ollama": 0.0,
+    "deterministic": 0.0,
+    "fallback": 0.003,
+    "openai": 0.003,
+    "vastai": 0.01,
+}
+
 
 def choose_provider(for_task: str = "chat") -> Tuple[str, str]:
     """Return the name and model of the chosen provider and record the choice.
@@ -48,6 +67,7 @@ def choose_provider(for_task: str = "chat") -> Tuple[str, str]:
         "provider": provider,
         "model": model,
         "reason": reason,
+        "estimated_cost": COST_ESTIMATES.get(provider, 0.0),
     })
     return _last_provider
 
@@ -119,7 +139,8 @@ def cost_summary() -> Dict[str, Any]:
             fallback_calls += 1
         estimated_cost_total += entry.get("estimated_cost", 0.0)
 
-    from igris.core.chat_engine import check_ollama_available
+    avail = check_availability()
+    budget = get_budget_status()
     return {
         "total_calls": len(_provider_history),
         "providers": providers,
@@ -127,7 +148,109 @@ def cost_summary() -> Dict[str, Any]:
         "fallback_calls": fallback_calls,
         "estimated_cost_total": round(estimated_cost_total, 6),
         "last_provider": _last_provider[0] if _last_provider else None,
-        "fallback_available": bool(CONFIG.fallback_llm.api_key),
-        "ollama_available": check_ollama_available(),
-        "vast_available": False,
+        "fallback_available": avail["openai"]["available"],
+        "ollama_available": avail["ollama"]["available"],
+        "vast_available": avail["vastai"]["available"],
+        "budget": budget,
+    }
+
+
+def check_availability() -> Dict[str, Any]:
+    """Check provider availability without exposing API keys."""
+    from igris.core.chat_engine import check_ollama_available
+    ollama_ok = check_ollama_available()
+    openai_key = bool(CONFIG.fallback_llm.api_key)
+    vast_key = bool(CONFIG.vastai.api_key)
+    return {
+        "ollama": {
+            "available": ollama_ok,
+            "provider": CONFIG.local_llm.provider,
+            "model": CONFIG.local_llm.model,
+            "cost_per_call": COST_ESTIMATES.get("local", 0.0),
+        },
+        "openai": {
+            "available": openai_key,
+            "provider": CONFIG.fallback_llm.provider,
+            "model": CONFIG.fallback_llm.model,
+            "key_present": openai_key,
+            "cost_per_call": COST_ESTIMATES.get("fallback", 0.003),
+        },
+        "vastai": {
+            "available": vast_key,
+            "key_present": vast_key,
+            "cost_per_call": COST_ESTIMATES.get("vastai", 0.01),
+            "auto_provision": False,
+        },
+    }
+
+
+def get_budget_config() -> Dict[str, Any]:
+    """Return current budget configuration (no secrets)."""
+    return dict(_budget_config)
+
+
+def set_budget_config(
+    max_session_cost: Optional[float] = None,
+    warn_threshold: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Update budget configuration."""
+    if max_session_cost is not None and max_session_cost > 0:
+        _budget_config["max_session_cost"] = max_session_cost
+    if warn_threshold is not None and 0 < warn_threshold <= 1.0:
+        _budget_config["warn_threshold"] = warn_threshold
+    return dict(_budget_config)
+
+
+def get_budget_status() -> Dict[str, Any]:
+    """Return current budget status with usage percentage."""
+    total_cost = sum(e.get("estimated_cost", 0.0) for e in _provider_history)
+    max_cost = _budget_config["max_session_cost"]
+    usage_pct = (total_cost / max_cost * 100) if max_cost > 0 else 0
+    warn_at = _budget_config["warn_threshold"] * 100
+    return {
+        "spent": round(total_cost, 6),
+        "max_session_cost": max_cost,
+        "usage_percent": round(usage_pct, 2),
+        "warning": usage_pct >= warn_at,
+        "exceeded": usage_pct >= 100,
+    }
+
+
+def estimate_route(
+    task_type: str = "chat",
+    complexity: str = "low",
+) -> Dict[str, Any]:
+    """Estimate which provider would be used and the cost, without executing."""
+    avail = check_availability()
+    # Simple routing logic: prefer local, fallback if complex
+    if complexity in ("high",) and avail["openai"]["available"]:
+        provider = "fallback"
+        model = CONFIG.fallback_llm.model
+        reason = "High complexity task, using fallback provider"
+        est_cost = COST_ESTIMATES.get("fallback", 0.003)
+    elif avail["ollama"]["available"]:
+        provider = "local"
+        model = CONFIG.local_llm.model
+        reason = "Local provider available and sufficient"
+        est_cost = COST_ESTIMATES.get("local", 0.0)
+    elif avail["openai"]["available"]:
+        provider = "fallback"
+        model = CONFIG.fallback_llm.model
+        reason = "Local unavailable, using fallback"
+        est_cost = COST_ESTIMATES.get("fallback", 0.003)
+    else:
+        provider = "none"
+        model = ""
+        reason = "No providers available"
+        est_cost = 0.0
+
+    budget = get_budget_status()
+    return {
+        "recommended_provider": provider,
+        "model": model,
+        "reason": reason,
+        "estimated_cost": est_cost,
+        "budget_remaining": round(budget["max_session_cost"] - budget["spent"], 6),
+        "would_exceed_budget": budget["spent"] + est_cost > budget["max_session_cost"],
+        "availability": {k: v["available"] for k, v in avail.items()},
     }
