@@ -3,23 +3,127 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>IGRIS GPT</title>
+    <title>IGRIS_GPT — Agentic Engineering Console</title>
     <link rel="stylesheet" href="/static/css/style.css" />
   </head>
   <body>
     <header>
-      <h1>IGRIS GPT</h1>
-    </header>
-    <main>
-      <p>
-        This is the initial version of the Agentic Engineering Console.  Most
-        functionality is under active development.  Use the panels below to
-        explore the API.
-      </p>
-      <div id="console">
-        <p>Console coming soon.</p>
+      <div class="header-left">
+        <h1>IGRIS_GPT</h1>
+        <span id="header-status" class="badge">loading...</span>
+        <span id="header-provider" class="badge badge-dim"></span>
       </div>
-    </main>
+    </header>
+
+    <div class="layout">
+      <!-- Left: Chat -->
+      <section class="chat-panel" aria-label="Chat">
+        <div id="chat-messages" class="chat-messages"></div>
+        <form id="chat-form" class="chat-form">
+          <input type="text" id="chat-input" placeholder="Ask IGRIS..." autocomplete="off" aria-label="Chat input" />
+          <button type="submit" aria-label="Send message">Send</button>
+        </form>
+      </section>
+
+      <!-- Right: Agentic Console -->
+      <section class="console-panel" aria-label="Agentic Console">
+        <nav class="tab-bar" role="tablist">
+          <button type="button" class="tab active" data-tab="mission" role="tab" aria-label="Mission Control">Mission</button>
+          <button type="button" class="tab" data-tab="terminal" role="tab" aria-label="Terminal">Terminal</button>
+          <button type="button" class="tab" data-tab="files" role="tab" aria-label="Files">Files</button>
+          <button type="button" class="tab" data-tab="git" role="tab" aria-label="Git">Git</button>
+          <button type="button" class="tab" data-tab="tests" role="tab" aria-label="Tests">Tests</button>
+          <button type="button" class="tab" data-tab="logs" role="tab" aria-label="Logs">Logs</button>
+          <button type="button" class="tab" data-tab="agent" role="tab" aria-label="Agent">Agent</button>
+          <button type="button" class="tab" data-tab="tasks" role="tab" aria-label="Tasks">Tasks</button>
+          <button type="button" class="tab" data-tab="safety" role="tab" aria-label="Safety">Safety</button>
+          <button type="button" class="tab" data-tab="cost" role="tab" aria-label="Cost">Cost</button>
+          <button type="button" class="tab" data-tab="a2a" role="tab" aria-label="A2A">A2A</button>
+        </nav>
+
+        <div class="tab-content">
+          <!-- Mission Control -->
+          <div id="tab-mission" class="tab-pane active" role="tabpanel">
+            <h3>Mission Control</h3>
+            <div id="mission-health" class="info-block"><span class="loading">Loading health...</span></div>
+            <div id="mission-readiness" class="info-block"></div>
+            <div id="mission-context" class="info-block"></div>
+          </div>
+
+          <!-- Terminal -->
+          <div id="tab-terminal" class="tab-pane" role="tabpanel">
+            <h3>Safe Terminal</h3>
+            <div id="terminal-commands" class="btn-group"></div>
+            <pre id="terminal-output" class="output-box"></pre>
+          </div>
+
+          <!-- Files -->
+          <div id="tab-files" class="tab-pane" role="tabpanel">
+            <h3>File Browser</h3>
+            <div id="file-tree" class="file-tree"></div>
+            <pre id="file-preview" class="output-box"></pre>
+          </div>
+
+          <!-- Git -->
+          <div id="tab-git" class="tab-pane" role="tabpanel">
+            <h3>Git Status</h3>
+            <div id="git-info" class="info-block"><span class="loading">Loading...</span></div>
+          </div>
+
+          <!-- Tests -->
+          <div id="tab-tests" class="tab-pane" role="tabpanel">
+            <h3>Test Runner</h3>
+            <button type="button" id="btn-run-tests" class="action-btn" aria-label="Run tests">Run Tests</button>
+            <pre id="test-output" class="output-box"></pre>
+          </div>
+
+          <!-- Logs -->
+          <div id="tab-logs" class="tab-pane" role="tabpanel">
+            <h3>Logs</h3>
+            <button type="button" id="btn-refresh-logs" class="action-btn" aria-label="Refresh logs">Refresh</button>
+            <pre id="logs-output" class="output-box"></pre>
+          </div>
+
+          <!-- Agent -->
+          <div id="tab-agent" class="tab-pane" role="tabpanel">
+            <h3>Agent Timeline</h3>
+            <button type="button" id="btn-refresh-timeline" class="action-btn" aria-label="Refresh timeline">Refresh</button>
+            <div id="timeline-list" class="timeline-list"></div>
+          </div>
+
+          <!-- Tasks -->
+          <div id="tab-tasks" class="tab-pane" role="tabpanel">
+            <h3>Tasks</h3>
+            <form id="task-form" class="inline-form">
+              <input type="text" id="task-input" placeholder="New task description..." aria-label="Task description" />
+              <button type="submit" aria-label="Create task">Create</button>
+            </form>
+            <div id="task-list" class="task-list"></div>
+          </div>
+
+          <!-- Safety -->
+          <div id="tab-safety" class="tab-pane" role="tabpanel">
+            <h3>Safety Status</h3>
+            <div id="safety-info" class="info-block"><span class="loading">Loading...</span></div>
+          </div>
+
+          <!-- Cost -->
+          <div id="tab-cost" class="tab-pane" role="tabpanel">
+            <h3>Cost &amp; Routing</h3>
+            <div id="cost-summary" class="info-block"></div>
+            <div id="routing-history" class="info-block"></div>
+            <div id="routing-explain" class="info-block"></div>
+          </div>
+
+          <!-- A2A -->
+          <div id="tab-a2a" class="tab-pane" role="tabpanel">
+            <h3>A2A Protocol</h3>
+            <div id="a2a-card" class="info-block"></div>
+            <div id="a2a-capabilities" class="info-block"></div>
+          </div>
+        </div>
+      </section>
+    </div>
     <script src="/static/js/app.js"></script>
   </body>
 </html>
