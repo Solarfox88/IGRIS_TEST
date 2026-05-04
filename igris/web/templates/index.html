@@ -28,28 +28,37 @@
       <!-- Right: Agentic Console -->
       <section class="console-panel" aria-label="Agentic Console">
         <nav class="tab-bar" role="tablist">
-          <button type="button" class="tab active" data-tab="mission" role="tab" aria-label="Mission Control">Mission</button>
-          <button type="button" class="tab" data-tab="terminal" role="tab" aria-label="Terminal">Terminal</button>
-          <button type="button" class="tab" data-tab="files" role="tab" aria-label="Files">Files</button>
-          <button type="button" class="tab" data-tab="git" role="tab" aria-label="Git">Git</button>
-          <button type="button" class="tab" data-tab="tests" role="tab" aria-label="Tests">Tests</button>
-          <button type="button" class="tab" data-tab="logs" role="tab" aria-label="Logs">Logs</button>
-          <button type="button" class="tab" data-tab="agent" role="tab" aria-label="Agent">Agent</button>
+          <button type="button" class="tab active" data-tab="dashboard" role="tab" aria-label="Dashboard">Dashboard</button>
+          <button type="button" class="tab" data-tab="code" role="tab" aria-label="Code">Code</button>
           <button type="button" class="tab" data-tab="tasks" role="tab" aria-label="Tasks">Tasks</button>
-          <button type="button" class="tab" data-tab="safety" role="tab" aria-label="Safety">Safety</button>
-          <button type="button" class="tab" data-tab="cost" role="tab" aria-label="Cost">Cost</button>
-          <button type="button" class="tab" data-tab="a2a" role="tab" aria-label="A2A">A2A</button>
+          <button type="button" class="tab" data-tab="terminal" role="tab" aria-label="Terminal">Terminal</button>
           <button type="button" class="tab" data-tab="memory" role="tab" aria-label="Memory">Memory</button>
-          <button type="button" class="tab" data-tab="loop" role="tab" aria-label="Loop">Loop</button>
-          <button type="button" class="tab" data-tab="patches" role="tab" aria-label="Patches">Patches</button>
+          <button type="button" class="tab" data-tab="safety" role="tab" aria-label="Safety">Safety</button>
+          <button type="button" class="tab" data-tab="advanced" role="tab" aria-label="Advanced">Advanced</button>
         </nav>
 
         <div class="tab-content">
-          <!-- Mission Control -->
-          <div id="tab-mission" class="tab-pane active" role="tabpanel">
-            <h3>Mission Control</h3>
-            <div id="mission-health" class="info-block"><span class="loading">Loading health...</span></div>
-            <div id="mission-readiness" class="info-block"></div>
+          <!-- Dashboard (enhanced Mission Control) -->
+          <div id="tab-dashboard" class="tab-pane active" role="tabpanel">
+            <h3>Dashboard</h3>
+            <div class="dashboard-grid">
+              <div class="dash-card" id="dash-health">
+                <div class="dash-card-title">System Health</div>
+                <div id="mission-health" class="info-block"><span class="loading">Loading health...</span></div>
+              </div>
+              <div class="dash-card" id="dash-readiness">
+                <div class="dash-card-title">Readiness</div>
+                <div id="mission-readiness" class="info-block"></div>
+              </div>
+              <div class="dash-card" id="dash-diagnostics">
+                <div class="dash-card-title">Diagnostics</div>
+                <div id="dash-diagnostics-summary" class="info-block"></div>
+              </div>
+              <div class="dash-card" id="dash-loop-summary">
+                <div class="dash-card-title">Loop Status</div>
+                <div id="dash-loop-info" class="info-block"></div>
+              </div>
+            </div>
             <div id="mission-context" class="info-block"></div>
             <h4>Missions</h4>
             <button type="button" id="btn-refresh-missions" class="action-btn">Refresh</button>
@@ -64,190 +73,215 @@
             <div id="mission-detail" class="info-block"></div>
             <h4>Mission Graph</h4>
             <div id="mission-graph" class="info-block"></div>
+            <h4>Decision Reports</h4>
+            <div id="dash-reports" class="info-block"></div>
           </div>
 
-          <!-- Terminal -->
-          <div id="tab-terminal" class="tab-pane" role="tabpanel">
-            <h3>Safe Terminal</h3>
-            <div id="terminal-commands" class="btn-group"></div>
-            <pre id="terminal-output" class="output-box"></pre>
-          </div>
-
-          <!-- Files -->
-          <div id="tab-files" class="tab-pane" role="tabpanel">
-            <h3>File Browser</h3>
-            <div id="file-tree" class="file-tree"></div>
-            <pre id="file-preview" class="output-box"></pre>
-          </div>
-
-          <!-- Git -->
-          <div id="tab-git" class="tab-pane" role="tabpanel">
-            <h3>Git Status</h3>
-            <button type="button" id="btn-refresh-git" class="action-btn">Refresh</button>
-            <div id="git-info" class="info-block"><span class="loading">Loading...</span></div>
-            <h4>Branches</h4>
-            <div id="git-branches" class="info-block"></div>
-            <h4>Create Branch</h4>
-            <form id="git-branch-form" class="patch-form">
-              <input type="text" id="git-branch-name" placeholder="Branch name" aria-label="Branch name" />
-              <button type="submit" class="action-btn">Create Branch</button>
-            </form>
-            <h4>Working Tree Diff</h4>
-            <button type="button" id="btn-load-diff" class="action-btn">Load Diff</button>
-            <button type="button" id="btn-load-staged-diff" class="action-btn">Load Staged Diff</button>
-            <div id="git-diff" class="output-box"></div>
-            <h4>Safety Check</h4>
-            <button type="button" id="btn-git-safety" class="action-btn">Run Safety Check</button>
-            <div id="git-safety" class="info-block"></div>
-            <h4>Commit Proposal</h4>
-            <form id="git-commit-form" class="patch-form">
-              <input type="text" id="git-commit-msg" placeholder="Commit message" aria-label="Commit message" />
-              <button type="submit" class="action-btn">Create Commit Proposal</button>
-            </form>
-            <div id="git-commit-proposal" class="info-block"></div>
-            <h4>PR Summary</h4>
-            <button type="button" id="btn-pr-summary" class="action-btn">Generate PR Summary</button>
-            <div id="git-pr-summary" class="info-block"></div>
-          </div>
-
-          <!-- Tests -->
-          <div id="tab-tests" class="tab-pane" role="tabpanel">
-            <h3>Test Runner</h3>
-            <div class="btn-group">
-              <button type="button" id="btn-run-tests" class="action-btn" aria-label="Run tests">Run Tests</button>
+          <!-- Code (Files + Git + Patches) -->
+          <div id="tab-code" class="tab-pane" role="tabpanel">
+            <div class="sub-tab-bar">
+              <button type="button" class="sub-tab active" data-subtab="code-files">Files</button>
+              <button type="button" class="sub-tab" data-subtab="code-git">Git</button>
+              <button type="button" class="sub-tab" data-subtab="code-patches">Patches</button>
             </div>
-            <pre id="test-output" class="output-box"></pre>
+            <div id="subtab-code-files" class="sub-tab-pane active">
+              <h3>File Browser</h3>
+              <div id="file-tree" class="file-tree"></div>
+              <pre id="file-preview" class="output-box"></pre>
+            </div>
+            <div id="subtab-code-git" class="sub-tab-pane">
+              <h3>Git Status</h3>
+              <button type="button" id="btn-refresh-git" class="action-btn">Refresh</button>
+              <div id="git-info" class="info-block"><span class="loading">Loading...</span></div>
+              <h4>Branches</h4>
+              <div id="git-branches" class="info-block"></div>
+              <h4>Create Branch</h4>
+              <form id="git-branch-form" class="patch-form">
+                <input type="text" id="git-branch-name" placeholder="Branch name" aria-label="Branch name" />
+                <button type="submit" class="action-btn">Create Branch</button>
+              </form>
+              <h4>Working Tree Diff</h4>
+              <button type="button" id="btn-load-diff" class="action-btn">Load Diff</button>
+              <button type="button" id="btn-load-staged-diff" class="action-btn">Load Staged Diff</button>
+              <div id="git-diff" class="output-box"></div>
+              <h4>Safety Check</h4>
+              <button type="button" id="btn-git-safety" class="action-btn">Run Safety Check</button>
+              <div id="git-safety" class="info-block"></div>
+              <h4>Commit Proposal</h4>
+              <form id="git-commit-form" class="patch-form">
+                <input type="text" id="git-commit-msg" placeholder="Commit message" aria-label="Commit message" />
+                <button type="submit" class="action-btn">Create Commit Proposal</button>
+              </form>
+              <div id="git-commit-proposal" class="info-block"></div>
+              <h4>PR Summary</h4>
+              <button type="button" id="btn-pr-summary" class="action-btn">Generate PR Summary</button>
+              <div id="git-pr-summary" class="info-block"></div>
+            </div>
+            <div id="subtab-code-patches" class="sub-tab-pane">
+              <h3>Patch Proposals</h3>
+              <button type="button" id="btn-refresh-patches" class="action-btn" aria-label="Refresh patches">Refresh</button>
+              <div id="patches-list" class="info-block"></div>
+              <h4>New Proposal</h4>
+              <form id="patch-form" class="patch-form">
+                <input type="text" id="patch-title" placeholder="Patch title" aria-label="Patch title" />
+                <input type="text" id="patch-desc" placeholder="Description" aria-label="Patch description" />
+                <input type="text" id="patch-path" placeholder="File path (e.g. docs/example.md)" aria-label="File path" />
+                <select id="patch-action" aria-label="Action">
+                  <option value="create">Create</option>
+                  <option value="modify">Modify</option>
+                </select>
+                <textarea id="patch-content" rows="6" placeholder="File content (after)" aria-label="File content"></textarea>
+                <button type="submit" class="action-btn">Propose Patch</button>
+              </form>
+              <h4>Proposal Detail</h4>
+              <div id="patch-detail" class="info-block"></div>
+              <div id="patch-diff" class="output-box"></div>
+              <div id="patch-actions"></div>
+            </div>
           </div>
 
-          <!-- Logs -->
-          <div id="tab-logs" class="tab-pane" role="tabpanel">
-            <h3>Logs</h3>
-            <button type="button" id="btn-refresh-logs" class="action-btn" aria-label="Refresh logs">Refresh</button>
-            <pre id="logs-output" class="output-box"></pre>
-          </div>
-
-          <!-- Agent -->
-          <div id="tab-agent" class="tab-pane" role="tabpanel">
-            <h3>Agent Timeline</h3>
-            <button type="button" id="btn-refresh-timeline" class="action-btn" aria-label="Refresh timeline">Refresh</button>
-            <div id="timeline-list" class="timeline-list"></div>
-          </div>
-
-          <!-- Tasks -->
+          <!-- Tasks (Tasks + Loop) -->
           <div id="tab-tasks" class="tab-pane" role="tabpanel">
-            <h3>Tasks</h3>
-            <form id="task-form" class="inline-form">
-              <input type="text" id="task-title-input" placeholder="Task title (optional)" aria-label="Task title" />
-              <input type="text" id="task-input" placeholder="Task description..." aria-label="Task description" />
-              <button type="submit" aria-label="Create task">Create</button>
-            </form>
-            <div id="task-list" class="task-list"></div>
-            <h4>Teacher Remediation</h4>
-            <button type="button" id="btn-teacher-remediate" class="action-btn" aria-label="Ask teacher for remediation">Ask Teacher</button>
-            <div id="teacher-output" class="output-box"></div>
-          </div>
-
-          <!-- Safety -->
-          <div id="tab-safety" class="tab-pane" role="tabpanel">
-            <h3>Safety Status</h3>
-            <button type="button" id="btn-refresh-safety" class="action-btn" aria-label="Refresh safety">Refresh</button>
-            <div id="safety-info" class="info-block"><span class="loading">Loading...</span></div>
-            <h4>Execution Reports</h4>
-            <div id="reports-list" class="info-block"></div>
-          </div>
-
-          <!-- Cost -->
-          <div id="tab-cost" class="tab-pane" role="tabpanel">
-            <h3>Cost &amp; Routing</h3>
-            <div class="btn-group">
-              <button type="button" id="btn-refresh-cost" class="action-btn" aria-label="Refresh cost">Refresh</button>
-              <button type="button" id="btn-estimate-route" class="action-btn" aria-label="Estimate route">Estimate Route</button>
+            <div class="sub-tab-bar">
+              <button type="button" class="sub-tab active" data-subtab="tasks-list">Tasks</button>
+              <button type="button" class="sub-tab" data-subtab="tasks-loop">Loop</button>
             </div>
-            <h4>Provider Availability</h4>
-            <div id="cost-availability" class="info-block"></div>
-            <h4>Budget Status</h4>
-            <div id="cost-budget" class="info-block"></div>
-            <h4>Cost Summary</h4>
-            <div id="cost-summary" class="info-block"></div>
-            <h4>Route Estimate</h4>
-            <div id="cost-estimate" class="info-block"></div>
-            <h4>Routing Explanation</h4>
-            <div id="routing-explain" class="info-block"></div>
+            <div id="subtab-tasks-list" class="sub-tab-pane active">
+              <h3>Tasks</h3>
+              <form id="task-form" class="inline-form">
+                <input type="text" id="task-title-input" placeholder="Task title (optional)" aria-label="Task title" />
+                <input type="text" id="task-input" placeholder="Task description..." aria-label="Task description" />
+                <button type="submit" aria-label="Create task">Create</button>
+              </form>
+              <div id="task-list" class="task-list"></div>
+              <h4>Teacher Remediation</h4>
+              <button type="button" id="btn-teacher-remediate" class="action-btn" aria-label="Ask teacher for remediation">Ask Teacher</button>
+              <div id="teacher-output" class="output-box"></div>
+            </div>
+            <div id="subtab-tasks-loop" class="sub-tab-pane">
+              <h3>Autonomous Loop</h3>
+              <div class="btn-group">
+                <button type="button" id="btn-loop-step" class="action-btn">Run 1 Step</button>
+                <button type="button" id="btn-loop-run3" class="action-btn">Run 3 Steps</button>
+                <button type="button" id="btn-loop-run5" class="action-btn">Run 5 Steps</button>
+                <button type="button" id="btn-refresh-loop" class="action-btn">Refresh Status</button>
+              </div>
+              <h4>Status</h4>
+              <div id="loop-status" class="info-block"></div>
+              <h4>Recent Steps</h4>
+              <div id="loop-recent" class="info-block"></div>
+            </div>
           </div>
 
-          <!-- A2A -->
-          <div id="tab-a2a" class="tab-pane" role="tabpanel">
-            <h3>A2A Protocol</h3>
-            <button type="button" id="btn-refresh-a2a" class="action-btn" aria-label="Refresh A2A">Refresh</button>
-            <h4>Agent Card</h4>
-            <div id="a2a-card" class="info-block"></div>
-            <h4>Capabilities</h4>
-            <div id="a2a-capabilities" class="info-block"></div>
-            <h4>A2A Tasks</h4>
-            <div id="a2a-tasks" class="info-block"></div>
+          <!-- Terminal (Terminal + Tests) -->
+          <div id="tab-terminal" class="tab-pane" role="tabpanel">
+            <div class="sub-tab-bar">
+              <button type="button" class="sub-tab active" data-subtab="terminal-cmd">Commands</button>
+              <button type="button" class="sub-tab" data-subtab="terminal-tests">Tests</button>
+            </div>
+            <div id="subtab-terminal-cmd" class="sub-tab-pane active">
+              <h3>Safe Terminal</h3>
+              <div id="terminal-commands" class="btn-group"></div>
+              <pre id="terminal-output" class="output-box"></pre>
+            </div>
+            <div id="subtab-terminal-tests" class="sub-tab-pane">
+              <h3>Test Runner</h3>
+              <div class="btn-group">
+                <button type="button" id="btn-run-tests" class="action-btn" aria-label="Run tests">Run Tests</button>
+              </div>
+              <pre id="test-output" class="output-box"></pre>
+            </div>
           </div>
 
-          <!-- Memory -->
+          <!-- Memory (Memory + Agent Timeline) -->
           <div id="tab-memory" class="tab-pane" role="tabpanel">
-            <h3>Decision &amp; Failure Memory</h3>
-            <button type="button" id="btn-refresh-memory" class="action-btn" aria-label="Refresh memory">Refresh</button>
-            <h4>Constraints</h4>
-            <div id="memory-constraints" class="info-block"></div>
-            <h4>Recent Decisions</h4>
-            <div id="memory-decisions" class="info-block"></div>
-            <h4>Recent Failures</h4>
-            <div id="memory-failures" class="info-block"></div>
-            <h4>Record Event</h4>
-            <form id="memory-event-form" class="patch-form">
-              <select id="memory-event-type" aria-label="Event type">
-                <option value="decision">Decision</option>
-                <option value="failure">Failure</option>
-                <option value="saturation">Saturation</option>
-                <option value="remediation">Remediation</option>
-              </select>
-              <input type="text" id="memory-event-title" placeholder="Title" aria-label="Event title" />
-              <input type="text" id="memory-event-family" placeholder="Family" aria-label="Family" />
-              <textarea id="memory-event-desc" placeholder="Description" aria-label="Description"></textarea>
-              <button type="submit" class="action-btn">Record Event</button>
-            </form>
-          </div>
-
-          <!-- Loop -->
-          <div id="tab-loop" class="tab-pane" role="tabpanel">
-            <h3>Autonomous Loop</h3>
-            <div class="btn-group">
-              <button type="button" id="btn-loop-step" class="action-btn">Run 1 Step</button>
-              <button type="button" id="btn-loop-run3" class="action-btn">Run 3 Steps</button>
-              <button type="button" id="btn-loop-run5" class="action-btn">Run 5 Steps</button>
-              <button type="button" id="btn-refresh-loop" class="action-btn">Refresh Status</button>
+            <div class="sub-tab-bar">
+              <button type="button" class="sub-tab active" data-subtab="memory-data">Memory</button>
+              <button type="button" class="sub-tab" data-subtab="memory-timeline">Timeline</button>
             </div>
-            <h4>Status</h4>
-            <div id="loop-status" class="info-block"></div>
-            <h4>Recent Steps</h4>
-            <div id="loop-recent" class="info-block"></div>
+            <div id="subtab-memory-data" class="sub-tab-pane active">
+              <h3>Decision &amp; Failure Memory</h3>
+              <button type="button" id="btn-refresh-memory" class="action-btn" aria-label="Refresh memory">Refresh</button>
+              <h4>Constraints</h4>
+              <div id="memory-constraints" class="info-block"></div>
+              <h4>Recent Decisions</h4>
+              <div id="memory-decisions" class="info-block"></div>
+              <h4>Recent Failures</h4>
+              <div id="memory-failures" class="info-block"></div>
+              <h4>Record Event</h4>
+              <form id="memory-event-form" class="patch-form">
+                <select id="memory-event-type" aria-label="Event type">
+                  <option value="decision">Decision</option>
+                  <option value="failure">Failure</option>
+                  <option value="saturation">Saturation</option>
+                  <option value="remediation">Remediation</option>
+                </select>
+                <input type="text" id="memory-event-title" placeholder="Title" aria-label="Event title" />
+                <input type="text" id="memory-event-family" placeholder="Family" aria-label="Family" />
+                <textarea id="memory-event-desc" placeholder="Description" aria-label="Description"></textarea>
+                <button type="submit" class="action-btn">Record Event</button>
+              </form>
+            </div>
+            <div id="subtab-memory-timeline" class="sub-tab-pane">
+              <h3>Agent Timeline</h3>
+              <button type="button" id="btn-refresh-timeline" class="action-btn" aria-label="Refresh timeline">Refresh</button>
+              <div id="timeline-list" class="timeline-list"></div>
+            </div>
           </div>
 
-          <!-- Patches -->
-          <div id="tab-patches" class="tab-pane" role="tabpanel">
-            <h3>Patch Proposals</h3>
-            <button type="button" id="btn-refresh-patches" class="action-btn" aria-label="Refresh patches">Refresh</button>
-            <div id="patches-list" class="info-block"></div>
-            <h4>New Proposal</h4>
-            <form id="patch-form" class="patch-form">
-              <input type="text" id="patch-title" placeholder="Patch title" aria-label="Patch title" />
-              <input type="text" id="patch-desc" placeholder="Description" aria-label="Patch description" />
-              <input type="text" id="patch-path" placeholder="File path (e.g. docs/example.md)" aria-label="File path" />
-              <select id="patch-action" aria-label="Action">
-                <option value="create">Create</option>
-                <option value="modify">Modify</option>
-              </select>
-              <textarea id="patch-content" rows="6" placeholder="File content (after)" aria-label="File content"></textarea>
-              <button type="submit" class="action-btn">Propose Patch</button>
-            </form>
-            <h4>Proposal Detail</h4>
-            <div id="patch-detail" class="info-block"></div>
-            <div id="patch-diff" class="output-box"></div>
-            <div id="patch-actions"></div>
+          <!-- Safety (Safety + Cost) -->
+          <div id="tab-safety" class="tab-pane" role="tabpanel">
+            <div class="sub-tab-bar">
+              <button type="button" class="sub-tab active" data-subtab="safety-status">Safety</button>
+              <button type="button" class="sub-tab" data-subtab="safety-cost">Cost &amp; Routing</button>
+            </div>
+            <div id="subtab-safety-status" class="sub-tab-pane active">
+              <h3>Safety Status</h3>
+              <button type="button" id="btn-refresh-safety" class="action-btn" aria-label="Refresh safety">Refresh</button>
+              <div id="safety-info" class="info-block"><span class="loading">Loading...</span></div>
+              <h4>Execution Reports</h4>
+              <div id="reports-list" class="info-block"></div>
+            </div>
+            <div id="subtab-safety-cost" class="sub-tab-pane">
+              <h3>Cost &amp; Routing</h3>
+              <div class="btn-group">
+                <button type="button" id="btn-refresh-cost" class="action-btn" aria-label="Refresh cost">Refresh</button>
+                <button type="button" id="btn-estimate-route" class="action-btn" aria-label="Estimate route">Estimate Route</button>
+              </div>
+              <h4>Provider Availability</h4>
+              <div id="cost-availability" class="info-block"></div>
+              <h4>Budget Status</h4>
+              <div id="cost-budget" class="info-block"></div>
+              <h4>Cost Summary</h4>
+              <div id="cost-summary" class="info-block"></div>
+              <h4>Route Estimate</h4>
+              <div id="cost-estimate" class="info-block"></div>
+              <h4>Routing Explanation</h4>
+              <div id="routing-explain" class="info-block"></div>
+            </div>
+          </div>
+
+          <!-- Advanced (A2A + Logs) -->
+          <div id="tab-advanced" class="tab-pane" role="tabpanel">
+            <div class="sub-tab-bar">
+              <button type="button" class="sub-tab active" data-subtab="adv-a2a">A2A</button>
+              <button type="button" class="sub-tab" data-subtab="adv-logs">Logs</button>
+            </div>
+            <div id="subtab-adv-a2a" class="sub-tab-pane active">
+              <h3>A2A Protocol</h3>
+              <button type="button" id="btn-refresh-a2a" class="action-btn" aria-label="Refresh A2A">Refresh</button>
+              <h4>Agent Card</h4>
+              <div id="a2a-card" class="info-block"></div>
+              <h4>Capabilities</h4>
+              <div id="a2a-capabilities" class="info-block"></div>
+              <h4>A2A Tasks</h4>
+              <div id="a2a-tasks" class="info-block"></div>
+            </div>
+            <div id="subtab-adv-logs" class="sub-tab-pane">
+              <h3>Logs</h3>
+              <button type="button" id="btn-refresh-logs" class="action-btn" aria-label="Refresh logs">Refresh</button>
+              <pre id="logs-output" class="output-box"></pre>
+            </div>
           </div>
         </div>
       </section>

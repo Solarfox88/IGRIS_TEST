@@ -221,13 +221,12 @@ class TestUIIntegration:
         assert r.status_code == 200
         assert "IGRIS_GPT" in r.text
 
-    def test_14_tabs(self, client):
+    def test_primary_tabs(self, client):
         r = client.get("/")
         html = r.text
         tabs = [
-            "mission", "terminal", "files", "git", "tests", "logs",
-            "agent", "tasks", "safety", "cost", "a2a", "memory",
-            "loop", "patches",
+            "dashboard", "code", "tasks", "terminal",
+            "memory", "safety", "advanced",
         ]
         for t in tabs:
             assert f'data-tab="{t}"' in html

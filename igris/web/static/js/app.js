@@ -40,6 +40,7 @@
 
   // Tab switching
   document.addEventListener("DOMContentLoaded", function () {
+    // Primary tabs
     $$(".tab").forEach(function (btn) {
       btn.addEventListener("click", function () {
         $$(".tab").forEach(function (b) { b.classList.remove("active"); });
@@ -50,18 +51,32 @@
       });
     });
 
+    // Sub-tab switching
+    $$(".sub-tab").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var bar = btn.parentElement;
+        bar.querySelectorAll(".sub-tab").forEach(function (b) { b.classList.remove("active"); });
+        var container = bar.parentElement;
+        container.querySelectorAll(".sub-tab-pane").forEach(function (p) { p.classList.remove("active"); });
+        btn.classList.add("active");
+        var pane = container.querySelector("#subtab-" + btn.dataset.subtab);
+        if (pane) pane.classList.add("active");
+      });
+    });
+
     loadStatus();
     loadMission();
+    loadDashboardExtras();
 
     // Auto-refresh active tab every 15s (lightweight)
     setInterval(function () {
       var activeTab = $(".tab.active");
       if (!activeTab) return;
       var tab = activeTab.dataset.tab;
-      if (tab === "mission") loadMission();
-      else if (tab === "agent") loadTimeline();
-      else if (tab === "loop") { if (typeof loadLoopStatus === "function") loadLoopStatus(); }
-      else if (tab === "cost") loadCost();
+      if (tab === "dashboard") { loadMission(); loadDashboardExtras(); }
+      else if (tab === "memory") loadTimeline();
+      else if (tab === "tasks") { if (typeof loadLoopStatus === "function") loadLoopStatus(); }
+      else if (tab === "safety") loadCost();
     }, 15000);
   });
 
@@ -100,6 +115,61 @@
       $("#mission-context").innerHTML = "<strong>Project Context</strong>" + kvTable(ctx.data);
     }
     loadMissions();
+  }
+
+  async function loadDashboardExtras() {
+    // Diagnostics summary
+    var diag = await api("GET", "/api/diagnostics/summary");
+    var diagEl = $("#dash-diagnostics-summary");
+    if (diagEl) {
+      if (diag.ok) {
+        var d = diag.data;
+        var html = '<div class="dash-summary">';
+        html += '<span>Starvation: <strong>' + esc(d.starvation_detected ? "YES" : "OK") + '</strong></span>';
+        html += '<span>Blocked: <strong>' + esc(String(d.blocked_task_count || 0)) + '</strong></span>';
+        html += '<span>Health: <strong>' + esc(String(d.family_health_issues || 0)) + ' issues</strong></span>';
+        html += '</div>';
+        diagEl.innerHTML = html;
+      } else {
+        diagEl.innerHTML = '<span class="dim">Diagnostics unavailable</span>';
+      }
+    }
+
+    // Loop summary
+    var loop = await api("GET", "/api/loop/status");
+    var loopEl = $("#dash-loop-info");
+    if (loopEl) {
+      if (loop.ok) {
+        var ls = loop.data;
+        var html = '<div class="dash-summary">';
+        html += '<span>Steps: <strong>' + esc(String(ls.total_steps || 0)) + '</strong></span>';
+        html += '<span>Last: <strong>' + esc(ls.last_action || "none") + '</strong></span>';
+        html += '</div>';
+        loopEl.innerHTML = html;
+      } else {
+        loopEl.innerHTML = '<span class="dim">Loop not started</span>';
+      }
+    }
+
+    // Decision reports
+    var reports = await api("GET", "/api/decision-reports");
+    var reportsEl = $("#dash-reports");
+    if (reportsEl) {
+      if (reports.ok && reports.data.reports && reports.data.reports.length > 0) {
+        var recent = reports.data.reports.slice(0, 3);
+        var html = '';
+        for (var i = 0; i < recent.length; i++) {
+          var rp = recent[i];
+          html += '<div class="dash-report-item">';
+          html += '<span class="dim">' + esc(rp.id || "") + '</span> ';
+          html += '<span>' + esc(rp.selected_task || rp.outcome || "report") + '</span>';
+          html += '</div>';
+        }
+        reportsEl.innerHTML = html;
+      } else {
+        reportsEl.innerHTML = '<span class="dim">No decision reports yet</span>';
+      }
+    }
   }
 
   var _selectedMissionId = null;

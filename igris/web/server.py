@@ -232,6 +232,46 @@ def create_app() -> FastAPI:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
+    # ---- Dashboard Summary ----
+
+    @app.get("/api/dashboard/summary")
+    async def api_dashboard_summary() -> Dict[str, object]:
+        """Aggregated dashboard view — health, readiness, diagnostics, loop."""
+        from igris.core import diagnostics as diagnostics_dash
+
+        diag = {}
+        try:
+            tasks = [t.to_dict() for t in task_engine.list_tasks()]
+            timeline = task_engine.recent_timeline_events(limit=50)
+            diag = diagnostics_dash.get_diagnostic_summary(
+                tasks, timeline, project_root=str(CONFIG.project_root),
+            )
+        except Exception:
+            pass
+
+        loop_info = {}
+        try:
+            loop_info = loop_engine.get_status()
+        except Exception:
+            pass
+
+        return {
+            "health": {"status": "ok"},
+            "diagnostics": diag,
+            "loop": loop_info,
+            "tab_layout": {
+                "primary": ["dashboard", "code", "tasks", "terminal", "memory", "safety", "advanced"],
+                "grouped": {
+                    "code": ["files", "git", "patches"],
+                    "tasks": ["tasks", "loop"],
+                    "terminal": ["commands", "tests"],
+                    "memory": ["memory", "timeline"],
+                    "safety": ["safety", "cost"],
+                    "advanced": ["a2a", "logs"],
+                },
+            },
+        }
+
     # ---- Chat Personality / Capabilities ----
 
     @app.get("/api/chat/capabilities")

@@ -37,8 +37,8 @@ class TestTabStructure:
         assert r.status_code == 200
         html = r.text
         expected_tabs = [
-            "mission", "terminal", "files", "git", "tests", "logs",
-            "agent", "tasks", "safety", "cost", "a2a", "memory", "loop", "patches",
+            "dashboard", "code", "tasks", "terminal",
+            "memory", "safety", "advanced",
         ]
         for tab in expected_tabs:
             assert f'data-tab="{tab}"' in html, f"Tab '{tab}' missing"
@@ -46,16 +46,14 @@ class TestTabStructure:
     def test_aria_labels_on_tabs(self, client):
         r = client.get("/")
         html = r.text
-        assert html.count('role="tab"') >= 14
+        assert html.count('role="tab"') >= 7
 
     def test_tab_panes_present(self, client):
         r = client.get("/")
         html = r.text
         expected_panes = [
-            "tab-mission", "tab-terminal", "tab-files", "tab-git",
-            "tab-tests", "tab-logs", "tab-agent", "tab-tasks",
-            "tab-safety", "tab-cost", "tab-a2a", "tab-memory",
-            "tab-loop", "tab-patches",
+            "tab-dashboard", "tab-code", "tab-tasks", "tab-terminal",
+            "tab-memory", "tab-safety", "tab-advanced",
         ]
         for pane in expected_panes:
             assert f'id="{pane}"' in html, f"Pane '{pane}' missing"

@@ -382,4 +382,7 @@ class TestUIActionCards:
                 "test_guided_actions.py", "chat_personality.py",
                 "server.py", "app.js", "style.css", "chat_engine.py",
                 "chat_streaming.py", "GUIDED_ACTIONS.md",
+                "index.html", "DASHBOARD_UI.md",
+                "test_integration_v02.py", "test_ui_polish.py",
+                "test_dashboard_tabs.py",
             ]), f"Unexpected changed file: {line}"
