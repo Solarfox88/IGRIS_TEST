@@ -1978,6 +1978,170 @@ def create_app() -> FastAPI:
         log = SafetyEventLog(project_root=str(CONFIG.project_root))
         return log.get_summary(mission_id)
 
+    # ---- Tool Runtime (Epic #41) ----
+
+    @app.get("/api/tools")
+    async def api_tools_list() -> Dict[str, object]:
+        """List available tool families."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        return {"tools": rt.list_tools()}
+
+    @app.post("/api/tools/shell/execute")
+    async def api_tools_shell(request: Request) -> Dict[str, object]:
+        """Execute a governed shell command."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        result = rt.shell_execute(
+            command_id=content.get("command_id", ""),
+            args=content.get("args"),
+            cwd=content.get("cwd"),
+            timeout=content.get("timeout", 30),
+            mission_id=content.get("mission_id", ""),
+            trace_id=content.get("trace_id", ""),
+        )
+        return result.to_dict()
+
+    @app.post("/api/tools/fs/read")
+    async def api_tools_fs_read(request: Request) -> Dict[str, object]:
+        """Read a file safely."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        result = rt.fs_read(
+            path=content.get("path", ""),
+            mission_id=content.get("mission_id", ""),
+            trace_id=content.get("trace_id", ""),
+        )
+        return result.to_dict()
+
+    @app.post("/api/tools/fs/write")
+    async def api_tools_fs_write(request: Request) -> Dict[str, object]:
+        """Write to a file safely."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        result = rt.fs_write(
+            path=content.get("path", ""),
+            content=content.get("content", ""),
+            mission_id=content.get("mission_id", ""),
+            trace_id=content.get("trace_id", ""),
+        )
+        return result.to_dict()
+
+    @app.post("/api/tools/fs/diff")
+    async def api_tools_fs_diff(request: Request) -> Dict[str, object]:
+        """Preview diff for a file."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        result = rt.fs_diff(
+            path=content.get("path", ""),
+            new_content=content.get("new_content", ""),
+            mission_id=content.get("mission_id", ""),
+            trace_id=content.get("trace_id", ""),
+        )
+        return result.to_dict()
+
+    @app.get("/api/tools/git/status")
+    async def api_tools_git_status(mission_id: str = "", trace_id: str = "") -> Dict[str, object]:
+        """Git status."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        return rt.git_status(mission_id=mission_id, trace_id=trace_id).to_dict()
+
+    @app.get("/api/tools/git/diff")
+    async def api_tools_git_diff(staged: bool = False, mission_id: str = "", trace_id: str = "") -> Dict[str, object]:
+        """Git diff."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        return rt.git_diff(staged=staged, mission_id=mission_id, trace_id=trace_id).to_dict()
+
+    @app.get("/api/tools/git/log")
+    async def api_tools_git_log(count: int = 10, mission_id: str = "", trace_id: str = "") -> Dict[str, object]:
+        """Git log."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        return rt.git_log(count=count, mission_id=mission_id, trace_id=trace_id).to_dict()
+
+    @app.get("/api/tools/git/branch")
+    async def api_tools_git_branch(mission_id: str = "", trace_id: str = "") -> Dict[str, object]:
+        """Git branches."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        return rt.git_branch(mission_id=mission_id, trace_id=trace_id).to_dict()
+
+    @app.post("/api/tools/git/commit")
+    async def api_tools_git_commit(request: Request) -> Dict[str, object]:
+        """Gated git commit."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        result = rt.git_commit(
+            message=content.get("message", ""),
+            files=content.get("files"),
+            mission_id=content.get("mission_id", ""),
+            trace_id=content.get("trace_id", ""),
+        )
+        return result.to_dict()
+
+    @app.post("/api/tools/docker/ps")
+    async def api_tools_docker_ps(request: Request) -> Dict[str, object]:
+        """Docker ps."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        content = await request.json() if await request.body() else {}
+        return rt.docker_ps(
+            mission_id=content.get("mission_id", ""),
+            trace_id=content.get("trace_id", ""),
+        ).to_dict()
+
+    @app.post("/api/tools/http/check")
+    async def api_tools_http_check(request: Request) -> Dict[str, object]:
+        """HTTP health check."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        result = rt.http_check(
+            url=content.get("url", ""),
+            timeout=content.get("timeout", 10),
+            mission_id=content.get("mission_id", ""),
+            trace_id=content.get("trace_id", ""),
+        )
+        return result.to_dict()
+
+    @app.post("/api/tools/test/run")
+    async def api_tools_test_run(request: Request) -> Dict[str, object]:
+        """Run tests."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        content = await request.json() if await request.body() else {}
+        result = rt.run_tests(
+            args=content.get("args"),
+            timeout=content.get("timeout", 120),
+            mission_id=content.get("mission_id", ""),
+            trace_id=content.get("trace_id", ""),
+        )
+        return result.to_dict()
+
+    @app.get("/api/tools/hosts")
+    async def api_tools_hosts() -> Dict[str, object]:
+        """List registered SSH hosts."""
+        from igris.core.tool_runtime import ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        return {"hosts": rt.list_hosts()}
+
+    @app.post("/api/tools/hosts/register")
+    async def api_tools_host_register(request: Request) -> Dict[str, object]:
+        """Register an SSH host."""
+        from igris.core.tool_runtime import SSHHost, ToolRuntime
+        rt = ToolRuntime(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        host = SSHHost.from_dict(content)
+        rt.register_host(host)
+        return {"registered": host.to_dict()}
+
     return app
 
 
