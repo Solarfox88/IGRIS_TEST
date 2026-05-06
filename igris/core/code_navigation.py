@@ -691,6 +691,86 @@ class CodeNavigator:
             returned_count=len(discoveries),
         )
 
+    def discover_tests(
+        self,
+        max_results: int = MAX_FILE_RESULTS,
+    ) -> NavResult:
+        """Discover test files and test patterns in the repository.
+
+        Finds files matching common test conventions:
+        - test_*.py, *_test.py
+        - tests/**/*.py
+        - Files containing TestClient, pytest, unittest
+
+        Returns:
+            NavResult with list of dicts:
+                {"file": str, "type": str, "indicators": [str]}
+        """
+        test_file_patterns = re.compile(
+            r"(^test_.*\.py$|.*_test\.py$|^conftest\.py$)",
+        )
+        test_dir_names = {"tests", "test", "testing"}
+
+        # Content indicators for test files
+        test_content_patterns = re.compile(
+            r"(import\s+pytest|from\s+pytest|import\s+unittest"
+            r"|from\s+unittest|TestClient|@pytest\.(mark|fixture)"
+            r"|class\s+Test\w+|def\s+test_\w+|/api/ping)",
+        )
+
+        discoveries: List[Dict[str, Any]] = []
+
+        for fpath in self._walk_code_files(self.root):
+            if fpath.suffix != ".py":
+                continue
+
+            rel = str(fpath.relative_to(self.root))
+            indicators: List[str] = []
+            test_type = ""
+
+            # Check filename pattern
+            if test_file_patterns.match(fpath.name):
+                indicators.append(f"filename:{fpath.name}")
+                test_type = "test_file"
+
+            # Check if in a test directory
+            parts = Path(rel).parts
+            if any(p in test_dir_names for p in parts):
+                indicators.append("in_test_directory")
+                if not test_type:
+                    test_type = "test_dir_file"
+
+            # Check content for test patterns
+            try:
+                content = fpath.read_text(encoding="utf-8", errors="replace")[:5000]
+                content_hits = test_content_patterns.findall(content)
+                if content_hits:
+                    for hit in content_hits[:5]:
+                        indicators.append(f"content:{hit}")
+                    if not test_type:
+                        test_type = "test_content"
+            except (OSError, PermissionError):
+                pass
+
+            if indicators:
+                discoveries.append({
+                    "file": rel,
+                    "type": test_type,
+                    "indicators": indicators,
+                })
+
+        total = len(discoveries)
+        discoveries = discoveries[:max_results]
+
+        return NavResult(
+            tool="discover_tests",
+            success=True,
+            data=discoveries,
+            truncated=total > max_results,
+            total_count=total,
+            returned_count=len(discoveries),
+        )
+
     # -- Internal helpers --
 
     def _walk_code_files(self, start: Path) -> List[Path]:

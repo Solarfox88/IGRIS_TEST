@@ -32,6 +32,7 @@ Stop conditions:
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -495,11 +496,13 @@ class AgentReasoningLoop:
                 step.outcome = "ask_user"
                 step.result_summary = action.parameters.get("question", "Need input")
 
-            # 6. Track file modifications
-            if action.action_type in ("write_file", "apply_patch"):
+            # 6. Track file modifications (write_file/apply_patch track
+            #    internally only when a real diff is verified; this
+            #    handles propose_patch's informational path tracking)
+            if action.action_type == "propose_patch" and exec_result.get("success"):
                 file_path = action.parameters.get("path", "")
                 if file_path:
-                    self._files_modified.append(file_path)
+                    self._world_state.setdefault("proposed_patches", []).append(file_path)
 
         except Exception as e:
             step.outcome = "error"
@@ -707,62 +710,203 @@ class AgentReasoningLoop:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def _execute_tool_runtime(self, action) -> Dict[str, Any]:
-        """Execute a tool runtime action.
+    def _get_tool_runtime(self):
+        """Get a ToolRuntime instance configured for this loop's project."""
+        from igris.core.tool_runtime import ToolRuntime
+        return ToolRuntime(project_root=self.project_root)
 
-        Uses the existing ToolRuntime from Epic #41 for governed execution.
+    def _execute_tool_runtime(self, action) -> Dict[str, Any]:
+        """Execute a tool runtime action using specific ToolRuntime methods.
+
+        Dispatches to the correct method (git_status, fs_write, run_tests,
+        etc.) rather than a generic .execute() which does not exist.
         """
         try:
+            rt = self._get_tool_runtime()
+
             if action.action_type == "git_status":
-                from igris.core.tool_runtime import ToolRuntime
-                rt = ToolRuntime()
-                tr = rt.execute("git", "status")
+                tr = rt.git_status()
                 return {
                     "success": tr.success,
                     "summary": tr.output[:200] if tr.output else "No output",
                     "error": tr.error,
+                    "result_data": tr.output,
                 }
+
             elif action.action_type == "git_diff":
-                from igris.core.tool_runtime import ToolRuntime
-                rt = ToolRuntime()
-                tr = rt.execute("git", "diff")
+                tr = rt.git_diff(staged=action.parameters.get("staged", False))
                 return {
                     "success": tr.success,
                     "summary": tr.output[:200] if tr.output else "No diff",
                     "error": tr.error,
+                    "result_data": tr.output,
                 }
+
             elif action.action_type == "run_tests":
-                from igris.core.tool_runtime import ToolRuntime
-                rt = ToolRuntime()
-                tr = rt.execute("shell", "run", command="python -m pytest -q --tb=short")
+                test_args = action.parameters.get("args", [])
+                tr = rt.run_tests(args=test_args if test_args else None)
                 return {
                     "success": tr.success,
                     "summary": tr.output[:500] if tr.output else "No output",
                     "error": tr.error,
+                    "result_data": tr.output,
                 }
+
             elif action.action_type == "http_check":
-                from igris.core.tool_runtime import ToolRuntime
-                rt = ToolRuntime()
-                tr = rt.execute("http", "check", url=action.parameters.get("url", ""))
+                tr = rt.http_check(url=action.parameters.get("url", ""))
                 return {
                     "success": tr.success,
                     "summary": tr.output[:200] if tr.output else "No response",
                     "error": tr.error,
                 }
-            elif action.action_type in ("write_file", "propose_patch", "apply_patch"):
-                # File modifications accepted — tracked for report
+
+            elif action.action_type == "write_file":
+                return self._execute_write_file(rt, action)
+
+            elif action.action_type == "propose_patch":
+                return self._execute_propose_patch(rt, action)
+
+            elif action.action_type == "apply_patch":
+                return self._execute_apply_patch(rt, action)
+
+            elif action.action_type == "shell_template":
+                cmd_id = action.parameters.get("command_id", "")
+                args = action.parameters.get("args", [])
+                tr = rt.shell_execute(command_id=cmd_id, args=args)
                 return {
-                    "success": True,
-                    "summary": f"Action {action.action_type} accepted for "
-                               f"path={action.parameters.get('path', 'unknown')}",
+                    "success": tr.success,
+                    "summary": tr.output[:200] if tr.output else "No output",
+                    "error": tr.error,
                 }
+
+            elif action.action_type == "raw_shell_proposal":
+                return {
+                    "success": False,
+                    "error": "Raw shell proposals must pass through Command "
+                             "Risk Engine. Use shell_template or structured "
+                             "tools instead.",
+                    "summary": "Blocked: raw shell requires risk gate",
+                }
+
             else:
                 return {
                     "success": False,
-                    "error": f"Tool runtime action not yet integrated: {action.action_type}",
+                    "error": f"Tool runtime action not yet integrated: "
+                             f"{action.action_type}",
                 }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _execute_write_file(self, rt, action) -> Dict[str, Any]:
+        """Execute write_file with real verification.
+
+        Checks:
+        - File hash before/after to detect real change
+        - Returns success=False if no actual change occurred
+        - Tracks files_modified only on real diff
+        """
+        import hashlib
+
+        file_path = action.parameters.get("path", "")
+        content = action.parameters.get("content", "")
+
+        if not file_path:
+            return {"success": False, "error": "write_file: missing 'path' parameter"}
+        if not content:
+            return {"success": False, "error": "write_file: missing 'content' parameter"}
+
+        # Hash before
+        hash_before = None
+        full_path = os.path.join(self.project_root, file_path)
+        if os.path.isfile(full_path):
+            try:
+                with open(full_path, "rb") as f:
+                    hash_before = hashlib.sha256(f.read()).hexdigest()
+            except OSError:
+                pass
+
+        # Check if content is identical (no-op write)
+        hash_new = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if hash_before == hash_new:
+            return {
+                "success": False,
+                "error": f"write_file: content identical to existing file "
+                         f"'{file_path}' — no change made. Use propose_patch "
+                         f"or apply_patch for targeted edits.",
+                "summary": f"No change: {file_path} already has this content",
+            }
+
+        # Perform the write via ToolRuntime (with safety checks)
+        tr = rt.fs_write(path=full_path, content=content)
+
+        if not tr.success:
+            return {
+                "success": False,
+                "error": tr.error,
+                "summary": f"write_file failed: {tr.error}",
+            }
+
+        # Verify hash after
+        try:
+            with open(full_path, "rb") as f:
+                hash_after = hashlib.sha256(f.read()).hexdigest()
+        except OSError as exc:
+            return {
+                "success": False,
+                "error": f"write_file: cannot verify written file: {exc}",
+            }
+
+        if hash_after != hash_new:
+            return {
+                "success": False,
+                "error": "write_file: verification failed — hash mismatch after write",
+            }
+
+        # Real change confirmed — track it
+        self._files_modified.append(file_path)
+
+        return {
+            "success": True,
+            "summary": f"Written {len(content)} chars to {file_path} "
+                       f"(hash changed: {(hash_before or 'new')[:8]}→{hash_after[:8]})",
+            "result_data": {"path": file_path, "chars": len(content), "hash": hash_after[:12]},
+        }
+
+    def _execute_propose_patch(self, rt, action) -> Dict[str, Any]:
+        """Execute propose_patch: show diff preview without applying."""
+        file_path = action.parameters.get("path", "")
+        new_content = action.parameters.get("content", "")
+
+        if not file_path:
+            return {"success": False, "error": "propose_patch: missing 'path'"}
+
+        full_path = os.path.join(self.project_root, file_path)
+        tr = rt.fs_diff(path=full_path, new_content=new_content)
+
+        return {
+            "success": tr.success,
+            "summary": tr.output[:300] if tr.output else "No diff output",
+            "error": tr.error,
+            "result_data": tr.output,
+        }
+
+    def _execute_apply_patch(self, rt, action) -> Dict[str, Any]:
+        """Execute apply_patch: write verified content to file."""
+        file_path = action.parameters.get("path", "")
+        content = action.parameters.get("content", "")
+
+        if not file_path or not content:
+            return {"success": False, "error": "apply_patch: missing 'path' or 'content'"}
+
+        # Delegate to write_file logic for verified write
+        write_action_params = {"path": file_path, "content": content}
+        # Temporarily set action parameters for the write
+        from igris.core.agent_action_schema import AgentAction
+        write_action = AgentAction(
+            action_type="write_file",
+            parameters=write_action_params,
+        )
+        return self._execute_write_file(rt, write_action)
 
     def _execute_plan_update(self, action) -> Dict[str, Any]:
         """Execute a plan update action."""
