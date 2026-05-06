@@ -1566,6 +1566,96 @@ def create_app() -> FastAPI:
         })
         return result
 
+    # ---- Doctor / Verify / Crash Recovery ----
+
+    @app.get("/api/doctor")
+    async def api_doctor() -> Dict[str, object]:
+        """Run environment diagnostics (igris doctor)."""
+        from igris.core.doctor import run_doctor
+        import os as _os
+        report = run_doctor(
+            project_root=str(CONFIG.project_root),
+            host=_os.environ.get("IGRIS_HOST", "127.0.0.1"),
+            port=int(_os.environ.get("IGRIS_PORT", "8000")),
+        )
+        task_engine.append_timeline_event({
+            "type": "doctor", "title": f"Doctor run: {report._compute_overall()}",
+            "detail": f"{len(report.checks)} checks, overall={report._compute_overall()}",
+            "severity": "info" if report._compute_overall() == "ok" else "warning",
+        })
+        return report.to_dict()
+
+    @app.get("/api/doctor/markdown")
+    async def api_doctor_markdown() -> JSONResponse:
+        """Run doctor and return Markdown report."""
+        from igris.core.doctor import run_doctor
+        import os as _os
+        report = run_doctor(
+            project_root=str(CONFIG.project_root),
+            host=_os.environ.get("IGRIS_HOST", "127.0.0.1"),
+            port=int(_os.environ.get("IGRIS_PORT", "8000")),
+        )
+        return JSONResponse(content={"markdown": report.to_markdown()})
+
+    @app.get("/api/verify")
+    async def api_verify() -> Dict[str, object]:
+        """Quick installation verification."""
+        from igris.core.doctor import run_verify
+        result = run_verify(project_root=str(CONFIG.project_root))
+        task_engine.append_timeline_event({
+            "type": "verify", "title": f"Verify: {'PASS' if result['ok'] else 'FAIL'}",
+            "detail": json.dumps({k: v for k, v in result["checks"].items()}, default=str),
+            "severity": "info" if result["ok"] else "warning",
+        })
+        return result
+
+    @app.get("/api/config/validate")
+    async def api_config_validate() -> Dict[str, object]:
+        """Validate configuration (.env, config.json, providers, budget, safety)."""
+        from igris.core.config_validator import validate_all
+        result = validate_all(project_root=str(CONFIG.project_root))
+        return result.to_dict()
+
+    @app.get("/api/crash-reports")
+    async def api_crash_reports(limit: int = 20) -> Dict[str, object]:
+        """List recent crash reports."""
+        from igris.core.crash_recovery import list_crash_reports
+        reports = list_crash_reports(project_root=str(CONFIG.project_root), limit=limit)
+        return {"reports": reports, "count": len(reports)}
+
+    @app.get("/api/crash-reports/last-good-state")
+    async def api_last_good_state() -> Dict[str, object]:
+        """Get the last known good state."""
+        from igris.core.crash_recovery import load_good_state
+        state = load_good_state(project_root=str(CONFIG.project_root))
+        return {"state": state, "available": state is not None}
+
+    @app.post("/api/crash-reports/save-good-state")
+    async def api_save_good_state(request: Request) -> Dict[str, object]:
+        """Persist the current state as last known good."""
+        from igris.core.crash_recovery import save_good_state
+        content = await request.json()
+        state = content.get("state", {})
+        if not state:
+            raise HTTPException(status_code=400, detail="State payload required")
+        save_good_state(state, project_root=str(CONFIG.project_root))
+        task_engine.append_timeline_event({
+            "type": "recovery",
+            "title": "Good state saved",
+            "detail": f"Keys: {', '.join(state.keys())}",
+            "severity": "info",
+        })
+        return {"saved": True}
+
+    @app.get("/api/crash-reports/{crash_id}")
+    async def api_crash_report_detail(crash_id: str) -> Dict[str, object]:
+        """Get a specific crash report."""
+        from igris.core.crash_recovery import get_crash_report
+        report = get_crash_report(crash_id, project_root=str(CONFIG.project_root))
+        if not report:
+            raise HTTPException(status_code=404, detail=f"Crash report {crash_id} not found")
+        return report
+
     return app
 
 
