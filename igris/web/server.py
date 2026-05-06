@@ -2142,6 +2142,104 @@ def create_app() -> FastAPI:
         rt.register_host(host)
         return {"registered": host.to_dict()}
 
+    # ---- GOAP Planner (Epic #43) ----
+
+    @app.get("/api/goap/state")
+    async def api_goap_state() -> Dict[str, object]:
+        """Get current world state."""
+        from igris.core.goap_planner import GOAPPlanner
+        planner = GOAPPlanner(project_root=str(CONFIG.project_root))
+        return planner.get_current_state().to_dict()
+
+    @app.post("/api/goap/plan")
+    async def api_goap_plan(request: Request) -> Dict[str, object]:
+        """Generate a GOAP plan for a goal."""
+        from igris.core.goap_planner import GOAPPlanner
+        planner = GOAPPlanner(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        goal = content.get("goal", {})
+        mission_id = content.get("mission_id", "")
+        plan = planner.generate_plan(goal=goal, mission_id=mission_id)
+        planner.save_plan(plan)
+        return plan.to_dict()
+
+    @app.get("/api/goap/plans")
+    async def api_goap_plans(mission_id: str = "") -> Dict[str, object]:
+        """List GOAP plans."""
+        from igris.core.goap_planner import GOAPPlanner
+        planner = GOAPPlanner(project_root=str(CONFIG.project_root))
+        plans = planner.list_plans(mission_id=mission_id)
+        return {"plans": plans, "count": len(plans)}
+
+    @app.get("/api/goap/plans/{plan_id}")
+    async def api_goap_plan_get(plan_id: str) -> Dict[str, object]:
+        """Get a specific GOAP plan."""
+        from igris.core.goap_planner import GOAPPlanner
+        planner = GOAPPlanner(project_root=str(CONFIG.project_root))
+        plan = planner.load_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        return plan.to_dict()
+
+    @app.get("/api/goap/plans/{plan_id}/explain")
+    async def api_goap_plan_explain(plan_id: str) -> Dict[str, object]:
+        """Explain a GOAP plan."""
+        from igris.core.goap_planner import GOAPPlanner
+        planner = GOAPPlanner(project_root=str(CONFIG.project_root))
+        plan = planner.load_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        return planner.explain_plan(plan)
+
+    @app.get("/api/goap/plans/{plan_id}/next")
+    async def api_goap_plan_next(plan_id: str) -> Dict[str, object]:
+        """Explain next action in a GOAP plan."""
+        from igris.core.goap_planner import GOAPPlanner
+        planner = GOAPPlanner(project_root=str(CONFIG.project_root))
+        plan = planner.load_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        return planner.explain_next_action(plan)
+
+    @app.post("/api/goap/eligible-actions")
+    async def api_goap_eligible(request: Request) -> Dict[str, object]:
+        """Get eligible actions for a state."""
+        from igris.core.goap_planner import GOAPPlanner, WorldState
+        planner = GOAPPlanner(project_root=str(CONFIG.project_root))
+        content = await request.json() if await request.body() else {}
+        state = WorldState.from_dict(content) if content else planner.get_current_state()
+        eligible = planner.get_eligible_actions(state)
+        return {"actions": [a.to_dict() for a in eligible], "count": len(eligible)}
+
+    @app.post("/api/goap/validate-llm-plan")
+    async def api_goap_validate(request: Request) -> Dict[str, object]:
+        """Validate LLM-generated plan output."""
+        from igris.core.goap_planner import GOAPPlanner
+        planner = GOAPPlanner(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        plan = planner.validate_llm_plan(content)
+        if not plan:
+            return {"valid": False, "reason": "Plan does not match required schema"}
+        return {"valid": True, "plan": plan.to_dict()}
+
+    @app.post("/api/goap/replan")
+    async def api_goap_replan(request: Request) -> Dict[str, object]:
+        """Replan after failure."""
+        from igris.core.goap_planner import GOAPPlanner
+        planner = GOAPPlanner(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        plan_id = content.get("plan_id", "")
+        plan = planner.load_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        new_plan = planner.replan_after_failure(
+            plan=plan,
+            failed_action_id=content.get("failed_action_id", ""),
+            failure_reason=content.get("failure_reason", ""),
+        )
+        planner.save_plan(new_plan)
+        return new_plan.to_dict()
+
     return app
 
 
