@@ -2554,6 +2554,50 @@ def create_app() -> FastAPI:
         scored.sort(key=lambda x: x["score"], reverse=True)
         return {"files": scored}
 
+    # ------------------------------------------------------------------
+    # Agent Reasoning Loop — Epic #61
+    # ------------------------------------------------------------------
+
+    @app.post("/api/reasoning/run")
+    async def api_reasoning_run(request: Request) -> Dict[str, object]:
+        """Run the agent reasoning loop for a goal."""
+        from igris.core.agent_reasoning_loop import AgentReasoningLoop
+        content = await request.json()
+        loop = AgentReasoningLoop(
+            project_root=str(CONFIG.project_root),
+            max_steps=content.get("max_steps", 50),
+            max_consecutive_errors=content.get("max_consecutive_errors", 5),
+            role=content.get("role", "coder"),
+        )
+        result = loop.run(
+            goal=content.get("goal", ""),
+            mission_id=content.get("mission_id", ""),
+            initial_context=content.get("initial_context"),
+        )
+        return result.to_dict()
+
+    @app.post("/api/reasoning/step")
+    async def api_reasoning_step(request: Request) -> Dict[str, object]:
+        """Execute a single reasoning loop step (for testing/debugging)."""
+        from igris.core.agent_reasoning_loop import AgentReasoningLoop
+        content = await request.json()
+        loop = AgentReasoningLoop(
+            project_root=str(CONFIG.project_root),
+            role=content.get("role", "coder"),
+            max_steps=1,
+        )
+        result = loop.run(
+            goal=content.get("goal", ""),
+            mission_id=content.get("mission_id", ""),
+        )
+        return result.to_dict()
+
+    @app.get("/api/reasoning/stop-reasons")
+    async def api_reasoning_stop_reasons() -> Dict[str, object]:
+        """List all possible loop stop reasons."""
+        from igris.core.agent_reasoning_loop import STOP_REASONS
+        return {"stop_reasons": list(STOP_REASONS)}
+
     return app
 
 
