@@ -1841,6 +1841,143 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Mission not found")
         return mission.to_dict()
 
+    # ---- Safety / Risk / Rollback (Epic #42) ----
+
+    @app.post("/api/safety/classify-risk")
+    async def api_classify_risk(request: Request) -> Dict[str, object]:
+        """Classify action risk level."""
+        from igris.core.risk_classifier import classify_action_risk
+        content = await request.json()
+        action_id = content.get("action_id", "")
+        description = content.get("description", "")
+        risk = classify_action_risk(action_id, description)
+        return {"action_id": action_id, "risk_level": risk}
+
+    @app.post("/api/safety/check-approval")
+    async def api_check_approval(request: Request) -> Dict[str, object]:
+        """Check if an action is approved under current policy."""
+        from igris.core.risk_classifier import check_approval
+        content = await request.json()
+        decision = check_approval(
+            action_id=content.get("action_id", ""),
+            risk_level=content.get("risk_level", "low"),
+            approval_mode=content.get("approval_mode", "safe"),
+            has_rollback=content.get("has_rollback", False),
+            host=content.get("host", ""),
+            authorized_hosts=content.get("authorized_hosts"),
+            approval_token=content.get("approval_token"),
+            trace_id=content.get("trace_id", ""),
+        )
+        return decision.to_dict()
+
+    @app.post("/api/safety/guard-secret")
+    async def api_guard_secret(request: Request) -> Dict[str, object]:
+        """Check if a file path is a secret file."""
+        from igris.core.risk_classifier import guard_secret_access
+        content = await request.json()
+        decision = guard_secret_access(content.get("path", ""), content.get("action", "read"))
+        return decision.to_dict()
+
+    @app.post("/api/rollback/backup-file")
+    async def api_rollback_backup_file(request: Request) -> Dict[str, object]:
+        """Create a file backup for rollback."""
+        from igris.core.rollback_manager import RollbackManager
+        mgr = RollbackManager(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        entry = mgr.backup_file(
+            file_path=content.get("file_path", ""),
+            mission_id=content.get("mission_id", ""),
+            action_id=content.get("action_id", ""),
+            trace_id=content.get("trace_id", ""),
+            description=content.get("description", ""),
+        )
+        if not entry:
+            raise HTTPException(status_code=400, detail="File not found or backup failed")
+        return entry.to_dict()
+
+    @app.post("/api/rollback/save-state")
+    async def api_rollback_save_state(request: Request) -> Dict[str, object]:
+        """Save a state snapshot for rollback."""
+        from igris.core.rollback_manager import RollbackManager
+        mgr = RollbackManager(project_root=str(CONFIG.project_root))
+        content = await request.json()
+        entry = mgr.save_state_snapshot(
+            state=content.get("state", {}),
+            mission_id=content.get("mission_id", ""),
+            action_id=content.get("action_id", ""),
+            trace_id=content.get("trace_id", ""),
+            description=content.get("description", ""),
+        )
+        return entry.to_dict()
+
+    @app.get("/api/rollback/entries")
+    async def api_rollback_list(mission_id: str = "", limit: int = 50) -> Dict[str, object]:
+        """List rollback entries."""
+        from igris.core.rollback_manager import RollbackManager
+        mgr = RollbackManager(project_root=str(CONFIG.project_root))
+        entries = mgr.list_entries(mission_id=mission_id or None, limit=limit)
+        return {"entries": entries, "count": len(entries)}
+
+    @app.get("/api/rollback/entries/{entry_id}")
+    async def api_rollback_get(entry_id: str) -> Dict[str, object]:
+        """Get a rollback entry."""
+        from igris.core.rollback_manager import RollbackManager
+        mgr = RollbackManager(project_root=str(CONFIG.project_root))
+        entry = mgr.get_entry(entry_id)
+        if not entry:
+            raise HTTPException(status_code=404, detail="Rollback entry not found")
+        return entry
+
+    @app.post("/api/rollback/entries/{entry_id}/verify")
+    async def api_rollback_verify(entry_id: str) -> Dict[str, object]:
+        """Verify if a rollback can be applied."""
+        from igris.core.rollback_manager import RollbackManager
+        mgr = RollbackManager(project_root=str(CONFIG.project_root))
+        return mgr.verify_rollback_applicable(entry_id)
+
+    @app.post("/api/rollback/entries/{entry_id}/apply")
+    async def api_rollback_apply(entry_id: str) -> Dict[str, object]:
+        """Apply a file rollback."""
+        from igris.core.rollback_manager import RollbackManager
+        mgr = RollbackManager(project_root=str(CONFIG.project_root))
+        success = mgr.apply_file_rollback(entry_id)
+        return {"applied": success, "entry_id": entry_id}
+
+    @app.get("/api/safety/events")
+    async def api_safety_events(
+        event_type: str = "",
+        mission_id: str = "",
+        severity: str = "",
+        limit: int = 100,
+    ) -> Dict[str, object]:
+        """List safety events."""
+        from igris.core.safety_event_log import SafetyEventLog
+        log = SafetyEventLog(project_root=str(CONFIG.project_root))
+        events = log.list_events(
+            event_type=event_type or None,
+            mission_id=mission_id or None,
+            severity=severity or None,
+            limit=limit,
+        )
+        return {"events": events, "count": len(events)}
+
+    @app.get("/api/safety/events/{event_id}")
+    async def api_safety_event_detail(event_id: str) -> Dict[str, object]:
+        """Get a specific safety event."""
+        from igris.core.safety_event_log import SafetyEventLog
+        log = SafetyEventLog(project_root=str(CONFIG.project_root))
+        event = log.get_event(event_id)
+        if not event:
+            raise HTTPException(status_code=404, detail="Safety event not found")
+        return event
+
+    @app.get("/api/safety/summary")
+    async def api_safety_summary(mission_id: str = "") -> Dict[str, object]:
+        """Get safety event summary."""
+        from igris.core.safety_event_log import SafetyEventLog
+        log = SafetyEventLog(project_root=str(CONFIG.project_root))
+        return log.get_summary(mission_id)
+
     return app
 
 
