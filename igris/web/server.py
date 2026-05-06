@@ -2424,6 +2424,84 @@ def create_app() -> FastAPI:
         )
         return {"role": role, "prompt": prompt}
 
+    # ------------------------------------------------------------------
+    # Code Navigation Tools — Epic #59
+    # ------------------------------------------------------------------
+
+    @app.post("/api/nav/search-code")
+    async def api_nav_search_code(request: Request) -> Dict[str, object]:
+        """Search for patterns in code files."""
+        from igris.core.code_navigation import CodeNavigator
+        content = await request.json()
+        nav = CodeNavigator(project_root=str(CONFIG.project_root))
+        result = nav.search_code(
+            pattern=content.get("pattern", ""),
+            path=content.get("path"),
+            max_results=content.get("max_results", 50),
+            context_lines=content.get("context_lines", 0),
+        )
+        return result.to_dict()
+
+    @app.post("/api/nav/find-files")
+    async def api_nav_find_files(request: Request) -> Dict[str, object]:
+        """Find files by name/glob pattern."""
+        from igris.core.code_navigation import CodeNavigator
+        content = await request.json()
+        nav = CodeNavigator(project_root=str(CONFIG.project_root))
+        result = nav.find_files(
+            pattern=content.get("pattern", ""),
+            max_results=content.get("max_results", 100),
+        )
+        return result.to_dict()
+
+    @app.post("/api/nav/list-directory")
+    async def api_nav_list_directory(request: Request) -> Dict[str, object]:
+        """List directory contents."""
+        from igris.core.code_navigation import CodeNavigator
+        content = await request.json()
+        nav = CodeNavigator(project_root=str(CONFIG.project_root))
+        result = nav.list_directory(
+            path=content.get("path", "."),
+            depth=content.get("depth", 1),
+            max_entries=content.get("max_entries", 200),
+        )
+        return result.to_dict()
+
+    @app.post("/api/nav/read-file-range")
+    async def api_nav_read_file_range(request: Request) -> Dict[str, object]:
+        """Read specific lines from a file."""
+        from igris.core.code_navigation import CodeNavigator
+        content = await request.json()
+        nav = CodeNavigator(project_root=str(CONFIG.project_root))
+        result = nav.read_file_range(
+            path=content.get("path", ""),
+            start=content.get("start", 1),
+            end=content.get("end"),
+            max_lines=content.get("max_lines", 500),
+        )
+        return result.to_dict()
+
+    @app.get("/api/nav/repo-map")
+    async def api_nav_repo_map() -> Dict[str, object]:
+        """Build a lightweight repository map."""
+        from igris.core.code_navigation import CodeNavigator
+        nav = CodeNavigator(project_root=str(CONFIG.project_root))
+        result = nav.repo_map()
+        return result.to_dict()
+
+    @app.post("/api/nav/find-symbol")
+    async def api_nav_find_symbol(request: Request) -> Dict[str, object]:
+        """Find symbol definitions (function, class, variable)."""
+        from igris.core.code_navigation import CodeNavigator
+        content = await request.json()
+        nav = CodeNavigator(project_root=str(CONFIG.project_root))
+        result = nav.find_symbol(
+            symbol=content.get("symbol", ""),
+            path=content.get("path"),
+            max_results=content.get("max_results", 50),
+        )
+        return result.to_dict()
+
     return app
 
 
