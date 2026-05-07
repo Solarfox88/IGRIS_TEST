@@ -501,6 +501,47 @@ class TestWriteGuardInLoop:
         assert result.status == "finished"
         assert "new_endpoint.py" in result.files_modified
 
+    def test_ast_validation_failure_blocks_loop(self, tmp_path):
+        """A Python AST validation failure must stop before more actions run."""
+        _write_tmp(str(tmp_path), "server.py", "def create_app():\n    app = object()\n    return app\n")
+        loop = AgentReasoningLoop(project_root=str(tmp_path), max_steps=3)
+        call_count = [0]
+
+        def mock_decide(ctx):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return AgentAction(
+                    mode="coder",
+                    action_type="insert_after",
+                    reason="insert invalid handler",
+                    parameters={
+                        "path": "server.py",
+                        "anchor": "def create_app():",
+                        "content": "def broken(:\n",
+                    },
+                    risk_hint="low",
+                    confidence=0.9,
+                ), []
+            return AgentAction(
+                mode="coder",
+                action_type="read_file_range",
+                reason="would continue without AST block",
+                parameters={"path": "server.py"},
+                risk_hint="low",
+                confidence=0.9,
+            ), []
+
+        with patch.object(loop, "_decide_action", side_effect=mock_decide):
+            result = loop.run(goal="Add version-info endpoint")
+
+        assert result.status == "blocked"
+        assert result.stop_reason == "blocked"
+        assert result.total_steps == 1
+        assert result.steps[0].outcome == "blocked"
+        assert "Python AST validation failed" in result.steps[0].error
+        assert call_count[0] == 1
+        assert "server.py" not in result.files_modified
+
 
 # ---------------------------------------------------------------------------
 # Issue #78 — False-positive secret guard on safe edit methods

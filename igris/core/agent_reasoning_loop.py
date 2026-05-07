@@ -58,6 +58,14 @@ STOP_REASONS = (
 
 DEFAULT_MAX_STEPS = 50
 DEFAULT_MAX_CONSECUTIVE_ERRORS = 5
+WRITE_ACTIONS = {
+    "write_file",
+    "insert_after",
+    "insert_before",
+    "replace_range",
+    "append_file",
+    "apply_patch",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +486,13 @@ class AgentReasoningLoop:
 
             if not exec_result.get("success", False):
                 step.error = exec_result.get("error", "Execution failed")
+                if self._is_ast_validation_write_failure(action.action_type, step.error):
+                    step.outcome = "blocked"
+                    step.result_summary = (
+                        "Python AST validation blocked a write action; "
+                        "stopping to avoid accumulating unsafe edits."
+                    )
+                    self._world_state["ast_validation_blocked"] = True
                 self._recent_errors.append({
                     "type": "action_failure",
                     "message": step.error,
@@ -510,6 +525,14 @@ class AgentReasoningLoop:
 
         step.duration_ms = int((time.monotonic() - t0) * 1000)
         return step
+
+    @staticmethod
+    def _is_ast_validation_write_failure(action_type: str, error: str) -> bool:
+        """Return True when a write action failed Python AST validation."""
+        return (
+            action_type in WRITE_ACTIONS
+            and "Python AST validation failed" in (error or "")
+        )
 
     def _build_context(self, goal: str, mission_id: str):
         """Build context packet for the current step."""
