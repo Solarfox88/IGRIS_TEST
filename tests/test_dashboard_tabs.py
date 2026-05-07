@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from tests.git_status_policy import assert_git_status_policy
 
 
 # ---------------------------------------------------------------------------
@@ -302,30 +303,4 @@ class TestDashboardAPI:
             assert pat not in text
 
     def test_git_status_clean(self):
-        import subprocess
-        r = subprocess.run(["git", "status", "--porcelain"],
-                          capture_output=True, text=True, cwd=".")
-        lines = [l for l in r.stdout.strip().split("\n") if l.strip()
-                 and not any(ig in l for ig in [".igris/", "logs/", "__pycache__",
-                                                 ".egg-info", ".pyc"])]
-        for line in lines:
-            assert any(allowed in line for allowed in [
-                "test_dashboard_tabs.py", "index.html",
-                "app.js", "style.css", "server.py",
-                "DASHBOARD_UI.md",
-                "test_guided_actions.py", "test_integration_v02.py",
-                "test_ui_polish.py", "chat_personality.py",
-                "chat_engine.py", "chat_streaming.py",
-                "GUIDED_ACTIONS.md",
-                "system_info.py", "safe_commands.py",
-                "test_system_info.py", "SYSTEM_INFO.md",
-                "README.md", "PREPARED_NOT_IMPLEMENTED.md",
-                # Files modified by #76:
-                "agent_action_schema.py", "agent_reasoning_loop.py",
-                "prompt_contract.py", "test_write_guard.py",
-                "test_agent_action_schema.py", "test_issue74_toolruntime_dispatcher.py",
-                "test_doctor.py", "test_issue72_reasoning_loop_fixes.py",
-                # Files modified by #78:
-                "code_navigation.py", "test_code_navigation.py",
-                "test_code_navigation_api.py",
-            ]), f"Unexpected changed file: {line}"
+        assert_git_status_policy()
