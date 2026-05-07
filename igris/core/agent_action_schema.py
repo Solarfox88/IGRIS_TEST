@@ -50,6 +50,10 @@ ACTION_TYPES = (
     "list_directory",
     "read_file_range",
     "write_file",
+    "insert_after",
+    "insert_before",
+    "replace_range",
+    "append_file",
     "propose_patch",
     "apply_patch",
     "run_tests",
@@ -90,13 +94,15 @@ READ_ONLY_ACTIONS = frozenset({
 
 # Actions that modify filesystem or state
 WRITE_ACTIONS = frozenset({
-    "write_file", "propose_patch", "apply_patch", "run_tests",
+    "write_file", "insert_after", "insert_before", "replace_range", "append_file",
+    "propose_patch", "apply_patch", "run_tests",
     "shell_template", "raw_shell_proposal",
 })
 
 # Actions requiring Command Risk Engine review
 RISK_GATED_ACTIONS = frozenset({
     "raw_shell_proposal", "shell_template", "apply_patch", "write_file",
+    "insert_after", "insert_before", "replace_range", "append_file",
 })
 
 # Role → allowed action types mapping
@@ -114,7 +120,8 @@ ROLE_ALLOWED_ACTIONS: Dict[str, frozenset] = {
     }),
     "coder": frozenset({
         "search_code", "find_files", "list_directory", "read_file_range",
-        "write_file", "propose_patch", "apply_patch", "run_tests",
+        "write_file", "insert_after", "insert_before", "replace_range", "append_file",
+        "propose_patch", "apply_patch", "run_tests",
         "git_status", "git_diff", "record_memory",
         "ask_user", "finish", "blocked",
     }),
@@ -130,7 +137,8 @@ ROLE_ALLOWED_ACTIONS: Dict[str, frozenset] = {
     }),
     "devops": frozenset({
         "search_code", "find_files", "list_directory", "read_file_range",
-        "write_file", "shell_template", "raw_shell_proposal",
+        "write_file", "insert_after", "insert_before", "replace_range", "append_file",
+        "shell_template", "raw_shell_proposal",
         "run_tests", "git_status", "git_diff", "http_check",
         "record_memory", "ask_user", "finish", "blocked",
     }),
@@ -320,6 +328,10 @@ def _validate_parameters(action_type: str, params: Dict[str, Any]) -> List[str]:
         "list_directory": ["path"],
         "read_file_range": ["path"],
         "write_file": ["path", "content"],
+        "insert_after": ["path", "anchor", "content"],
+        "insert_before": ["path", "anchor", "content"],
+        "replace_range": ["path", "start", "end", "content"],
+        "append_file": ["path", "content"],
         "propose_patch": ["files"],
         "apply_patch": ["patch_id"],
         "run_tests": [],
@@ -381,6 +393,10 @@ ACTION_ROUTING = {
     "read_file_range": "code_navigation",
     # Modification
     "write_file": "tool_runtime",
+    "insert_after": "tool_runtime",
+    "insert_before": "tool_runtime",
+    "replace_range": "tool_runtime",
+    "append_file": "tool_runtime",
     "propose_patch": "tool_runtime",
     "apply_patch": "tool_runtime",
     # Testing

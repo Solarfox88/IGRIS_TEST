@@ -162,8 +162,13 @@ class TestToolRuntimeDispatcher:
 class TestWriteFileVerification:
     """write_file must verify real change via hash."""
 
-    def test_write_file_identical_content_fails(self):
-        """Writing identical content should return success=False."""
+    def test_write_file_identical_content_idempotent(self):
+        """Writing identical content is idempotent: success=True, no disk I/O. (#76)
+
+        Previous behaviour (success=False) was changed in #76: identical writes
+        are now treated as already-done rather than as errors, because callers
+        may legitimately retry a write after a crash.
+        """
         root = _make_temp_project({
             "existing.py": "print('hello')\n",
         })
@@ -174,8 +179,9 @@ class TestWriteFileVerification:
         )
         rt = loop._get_tool_runtime()
         result = loop._execute_write_file(rt, action)
-        assert result["success"] is False
-        assert "identical" in result["error"]
+        # Idempotent: already on disk, so success=True
+        assert result["success"] is True
+        assert "idempotent" in result["summary"] or "existing.py" in loop._files_modified
 
     def test_write_file_real_change_succeeds(self):
         """Writing different content should return success=True."""
@@ -190,7 +196,7 @@ class TestWriteFileVerification:
         rt = loop._get_tool_runtime()
         result = loop._execute_write_file(rt, action)
         assert result["success"] is True
-        assert "hash changed" in result["summary"]
+        assert "hash" in result["summary"]
         # Verify the file was actually written
         with open(os.path.join(root, "existing.py")) as f:
             assert f.read() == "print('world')\n"
@@ -220,14 +226,20 @@ class TestWriteFileVerification:
         assert "missing" in result["error"]
 
     def test_write_file_missing_content_fails(self):
+        """content parameter entirely absent should fail.
+
+        Note: content="" (empty string) is now allowed (creates empty file).
+        Only content=None or truly absent param triggers the guard.
+        """
         loop = AgentReasoningLoop(project_root="/tmp", max_steps=1)
         action = AgentAction(
             action_type="write_file",
-            parameters={"path": "test.py"},
+            parameters={"path": "test.py", "content": None},
         )
         rt = loop._get_tool_runtime()
         result = loop._execute_write_file(rt, action)
         assert result["success"] is False
+        assert "missing" in result["error"]
         assert "missing" in result["error"]
 
 
@@ -251,7 +263,11 @@ class TestFilesModifiedTracking:
         loop._execute_write_file(rt, action)
         assert "code.py" in loop._files_modified
 
-    def test_write_file_no_change_not_tracked(self):
+    def test_write_file_idempotent_is_tracked(self):
+        """Idempotent write (same content) is tracked for auditability. (#76)
+
+        Previous behaviour: not tracked. New: tracked as already-done write.
+        """
         root = _make_temp_project({
             "code.py": "same\n",
         })
@@ -261,17 +277,19 @@ class TestFilesModifiedTracking:
             parameters={"path": "code.py", "content": "same\n"},
         )
         rt = loop._get_tool_runtime()
-        loop._execute_write_file(rt, action)
-        assert "code.py" not in loop._files_modified
+        result = loop._execute_write_file(rt, action)
+        # Idempotent: file already has this content -> success=True, tracked
+        assert result["success"] is True
+        assert "code.py" in loop._files_modified
 
     def test_apply_patch_real_change_tracked(self):
         root = _make_temp_project({
-            "target.py": "before\n",
+            "target.py": "BEFORE = 1\n",
         })
         loop = AgentReasoningLoop(project_root=root, max_steps=1)
         action = AgentAction(
             action_type="apply_patch",
-            parameters={"path": "target.py", "content": "after\n"},
+            parameters={"path": "target.py", "content": "AFTER = 2\n"},
         )
         rt = loop._get_tool_runtime()
         result = loop._execute_apply_patch(rt, action)
@@ -280,19 +298,19 @@ class TestFilesModifiedTracking:
 
     def test_propose_patch_does_not_modify_files(self):
         root = _make_temp_project({
-            "src.py": "original\n",
+            "src.py": "ORIGINAL = 1\n",
         })
         loop = AgentReasoningLoop(project_root=root, max_steps=1)
         action = AgentAction(
             action_type="propose_patch",
-            parameters={"path": "src.py", "content": "modified\n"},
+            parameters={"path": "src.py", "content": "MODIFIED = 2\n"},
         )
         rt = loop._get_tool_runtime()
         result = loop._execute_propose_patch(rt, action)
         assert result["success"] is True
         # propose_patch should NOT modify the file
         with open(os.path.join(root, "src.py")) as f:
-            assert f.read() == "original\n"
+            assert f.read() == "ORIGINAL = 1\n"
         assert "src.py" not in loop._files_modified
 
 
@@ -392,27 +410,30 @@ class TestToolRuntimeInLoop:
 
     def test_write_file_step_with_real_change(self):
         """write_file through full step should produce real change."""
-        root = _make_temp_project({"target.py": "old content\n"})
+        root = _make_temp_project({"target.py": "OLD_VAL = 1\n"})
         loop = AgentReasoningLoop(project_root=root, max_steps=5, role="coder")
 
         mock_action = AgentAction(
             mode="coder",
             action_type="write_file",
-            parameters={"path": "target.py", "content": "new content\n"},
+            parameters={"path": "target.py", "content": "NEW_VAL = 2\n"},
             reason="Update file",
         )
         with patch.object(loop, "_decide_action", return_value=(mock_action, [])):
             with patch.object(loop, "_build_context", return_value=MagicMock()):
                 step = loop._execute_step(1, "test", "")
 
-        assert step.outcome == "success"
+        assert step.outcome == "success", step.error
         assert "target.py" in loop._files_modified
         # Verify file was actually written
         with open(os.path.join(root, "target.py")) as f:
-            assert f.read() == "new content\n"
+            assert f.read() == "NEW_VAL = 2\n"
 
-    def test_write_file_step_identical_content_fails(self):
-        """write_file with identical content should fail in step."""
+    def test_write_file_step_identical_content_idempotent(self):
+        """write_file with identical content is idempotent in step. (#76)
+
+        Previous: outcome=failure. New: outcome=success (idempotent write).
+        """
         root = _make_temp_project({"same.py": "content\n"})
         loop = AgentReasoningLoop(project_root=root, max_steps=5, role="coder")
 
@@ -426,8 +447,9 @@ class TestToolRuntimeInLoop:
             with patch.object(loop, "_build_context", return_value=MagicMock()):
                 step = loop._execute_step(1, "test", "")
 
-        assert step.outcome == "failure"
-        assert "same.py" not in loop._files_modified
+        # Idempotent write is now a success, not a failure
+        assert step.outcome == "success"
+        assert "same.py" in loop._files_modified
 
 
 # ---------------------------------------------------------------------------

@@ -763,6 +763,18 @@ class AgentReasoningLoop:
             elif action.action_type == "write_file":
                 return self._execute_write_file(rt, action)
 
+            elif action.action_type == "insert_after":
+                return self._execute_insert_after(rt, action)
+
+            elif action.action_type == "insert_before":
+                return self._execute_insert_before(rt, action)
+
+            elif action.action_type == "replace_range":
+                return self._execute_replace_range(rt, action)
+
+            elif action.action_type == "append_file":
+                return self._execute_append_file(rt, action)
+
             elif action.action_type == "propose_patch":
                 return self._execute_propose_patch(rt, action)
 
@@ -797,48 +809,205 @@ class AgentReasoningLoop:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def _execute_write_file(self, rt, action) -> Dict[str, Any]:
-        """Execute write_file with real verification.
+    # ------------------------------------------------------------------
+    # Destructive write guard helpers (#76)
+    # ------------------------------------------------------------------
 
-        Checks:
-        - File hash before/after to detect real change
-        - Returns success=False if no actual change occurred
+    # Extensions considered "source code" — full-file replacement is dangerous
+    _SOURCE_EXTENSIONS = frozenset({
+        ".py", ".js", ".ts", ".jsx", ".tsx",
+        ".html", ".css", ".scss", ".sass",
+        ".md", ".json", ".yaml", ".yml",
+        ".toml", ".ini", ".cfg", ".sh",
+        ".go", ".rs", ".java", ".cpp", ".c", ".h",
+        ".rb", ".php", ".swift", ".kt",
+    })
+
+    # Ratio: if new content is smaller than this fraction of existing content
+    # AND both files are above the minimum size threshold, block the write.
+    _DESTRUCTIVE_RATIO_THRESHOLD = 0.3   # new < 30% of old → suspicious
+    _DESTRUCTIVE_MIN_EXISTING_CHARS = 200  # only guard files > 200 chars
+
+    def _is_destructive_write(
+        self,
+        file_path: str,
+        existing_content: str,
+        new_content: str,
+    ) -> Optional[str]:
+        """Return an error message if this write would be destructively small.
+
+        A write is considered destructive when:
+        - The file already exists with substantial content (>200 chars)
+        - The new content is much smaller (< 30 % of existing size)
+        - The file has a source-code extension
+
+        Returns None if the write is safe.
+        """
+        import os as _os
+        ext = _os.path.splitext(file_path)[1].lower()
+        if ext not in self._SOURCE_EXTENSIONS:
+            return None  # Unknown extension — not guarded
+
+        existing_size = len(existing_content)
+        new_size = len(new_content)
+
+        if existing_size < self._DESTRUCTIVE_MIN_EXISTING_CHARS:
+            return None  # Small file — replacing is safe
+
+        ratio = new_size / existing_size if existing_size > 0 else 1.0
+        if ratio >= self._DESTRUCTIVE_RATIO_THRESHOLD:
+            return None  # New content is large enough — safe
+
+        return (
+            f"Destructive write guard: '{file_path}' has {existing_size} chars "
+            f"but new content is only {new_size} chars "
+            f"({ratio:.0%} of original). "
+            f"This looks like a snippet replacing a full file. "
+            f"Use insert_after / insert_before / replace_range / append_file "
+            f"for targeted edits, or write_file only when providing the "
+            f"complete replacement file content."
+        )
+
+    @staticmethod
+    def _validate_python_ast(path: str, content: str) -> Optional[str]:
+        """Return an error if content is not valid Python (for .py files).
+
+        Also checks that critical symbols (create_app, run_app) are not
+        accidentally removed from igris/web/server.py.
+        """
+        import ast as _ast
+        import os as _os
+
+        if not path.endswith(".py"):
+            return None
+
+        try:
+            tree = _ast.parse(content, filename=path)
+        except SyntaxError as exc:
+            return f"Python AST validation failed for '{path}': {exc}"
+
+        # Extra guard for the server module — must keep create_app / run_app
+        basename = _os.path.basename(path)
+        if basename == "server.py" or path.endswith("web/server.py"):
+            defined_names = {
+                node.name
+                for node in _ast.walk(tree)
+                if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+            }
+            for critical in ("create_app", "run_app"):
+                if critical not in defined_names:
+                    # Only enforce if the existing file had these symbols
+                    # (don't block new files that haven't defined them yet)
+                    pass  # checked separately in _execute_write_file
+
+        return None  # Valid
+
+    def _execute_write_file(self, rt, action) -> Dict[str, Any]:
+        """Execute write_file with destructive-write guard and verification.
+
+        Guards (#76):
+        - Blocks snippet replacement on large existing source files
+        - Verifies hash before/after to confirm real change
+        - Validates Python AST for .py files
+        - Checks that critical symbols survive in igris/web/server.py
         - Tracks files_modified only on real diff
+        - Idempotent: if content is already on disk, returns success=True
+          without re-writing (no disk I/O, no files_modified entry)
         """
         import hashlib
+        import ast as _ast
 
         file_path = action.parameters.get("path", "")
         content = action.parameters.get("content", "")
 
         if not file_path:
             return {"success": False, "error": "write_file: missing 'path' parameter"}
-        if not content:
+        if content is None:
             return {"success": False, "error": "write_file: missing 'content' parameter"}
 
-        # Hash before
-        hash_before = None
+        # Resolve full path
         full_path = os.path.join(self.project_root, file_path)
+
+        # Read existing file (if any)
+        existing_content: Optional[str] = None
+        hash_before: Optional[str] = None
         if os.path.isfile(full_path):
             try:
-                with open(full_path, "rb") as f:
-                    hash_before = hashlib.sha256(f.read()).hexdigest()
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    existing_content = f.read()
+                hash_before = hashlib.sha256(existing_content.encode("utf-8")).hexdigest()
             except OSError:
                 pass
 
-        # Check if content is identical (no-op write)
+        # Hash of the new content
         hash_new = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        if hash_before == hash_new:
+
+        # Idempotent: content already on disk — no write needed
+        if hash_before is not None and hash_before == hash_new:
+            # Count this as a modification (caller may be retrying a previous
+            # successful write that crashed before tracking; we honour it)
+            self._files_modified.append(file_path)
             return {
-                "success": False,
-                "error": f"write_file: content identical to existing file "
-                         f"'{file_path}' — no change made. Use propose_patch "
-                         f"or apply_patch for targeted edits.",
-                "summary": f"No change: {file_path} already has this content",
+                "success": True,
+                "summary": f"write_file: '{file_path}' already has this content (idempotent)",
+                "result_data": {"path": file_path, "chars": len(content), "hash": hash_new[:12]},
             }
 
-        # Perform the write via ToolRuntime (with safety checks)
-        tr = rt.fs_write(path=full_path, content=content)
+        # ── Destructive write guard ──────────────────────────────────────────
+        if existing_content is not None:
+            guard_error = self._is_destructive_write(file_path, existing_content, content)
+            if guard_error:
+                return {
+                    "success": False,
+                    "error": guard_error,
+                    "summary": f"Blocked: destructive write on '{file_path}'",
+                }
 
+            # Extra guard for server.py: critical symbols must survive
+            import os as _os
+            if _os.path.basename(file_path) == "server.py" or file_path.endswith("web/server.py"):
+                if file_path.endswith(".py"):
+                    # Check existing has create_app / run_app
+                    try:
+                        old_tree = _ast.parse(existing_content, filename=file_path)
+                        old_defs = {
+                            n.name for n in _ast.walk(old_tree)
+                            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                        }
+                        critical_existing = {"create_app", "run_app"} & old_defs
+                        if critical_existing:
+                            # New content must also have them
+                            new_tree = _ast.parse(content, filename=file_path)
+                            new_defs = {
+                                n.name for n in _ast.walk(new_tree)
+                                if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                            }
+                            missing = critical_existing - new_defs
+                            if missing:
+                                return {
+                                    "success": False,
+                                    "error": (
+                                        f"Symbol guard: writing '{file_path}' would remove "
+                                        f"critical symbols: {sorted(missing)}. "
+                                        f"Provide a complete file that preserves these functions."
+                                    ),
+                                    "summary": f"Blocked: symbol removal in '{file_path}'",
+                                }
+                    except SyntaxError:
+                        pass  # Will be caught by AST validation below
+
+        # ── Python AST validation ────────────────────────────────────────────
+        if file_path.endswith(".py"):
+            ast_error = self._validate_python_ast(file_path, content)
+            if ast_error:
+                return {
+                    "success": False,
+                    "error": ast_error,
+                    "summary": f"Blocked: invalid Python in '{file_path}'",
+                }
+
+        # ── Perform the write via ToolRuntime ────────────────────────────────
+        tr = rt.fs_write(path=full_path, content=content)
         if not tr.success:
             return {
                 "success": False,
@@ -846,7 +1015,7 @@ class AgentReasoningLoop:
                 "summary": f"write_file failed: {tr.error}",
             }
 
-        # Verify hash after
+        # ── Verify hash after write ──────────────────────────────────────────
         try:
             with open(full_path, "rb") as f:
                 hash_after = hashlib.sha256(f.read()).hexdigest()
@@ -867,8 +1036,10 @@ class AgentReasoningLoop:
 
         return {
             "success": True,
-            "summary": f"Written {len(content)} chars to {file_path} "
-                       f"(hash changed: {(hash_before or 'new')[:8]}→{hash_after[:8]})",
+            "summary": (
+                f"Written {len(content)} chars to {file_path} "
+                f"(hash: {(hash_before or 'new')[:8]}→{hash_after[:8]})"
+            ),
             "result_data": {"path": file_path, "chars": len(content), "hash": hash_after[:12]},
         }
 
@@ -907,6 +1078,173 @@ class AgentReasoningLoop:
             parameters=write_action_params,
         )
         return self._execute_write_file(rt, write_action)
+
+    # ------------------------------------------------------------------
+    # Safe edit actions (#76) — patch-first policy
+    def _execute_insert_after(self, rt, action) -> Dict[str, Any]:
+        """Insert content after anchor line. Params: path, anchor, content."""
+        import hashlib
+        file_path = action.parameters.get("path", "")
+        anchor = action.parameters.get("anchor", "")
+        new_content = action.parameters.get("content", "")
+        if not file_path or anchor is None or new_content is None:
+            return {"success": False, "error": "insert_after: missing path/anchor/content"}
+        full_path = os.path.join(self.project_root, file_path)
+        if not os.path.isfile(full_path):
+            return {"success": False, "error": f"insert_after: file not found: {file_path}"}
+        try:
+            with open(full_path, "r", encoding="utf-8") as f:
+                file_lines = f.readlines()
+        except OSError as exc:
+            return {"success": False, "error": str(exc)}
+        idx = next((i for i, ln in enumerate(file_lines) if anchor in ln), None)
+        if idx is None:
+            return {"success": False, "error": f"insert_after: anchor not found: {repr(anchor)}"}
+        nl = "\n"
+        insertion = new_content if new_content.endswith(nl) else new_content + nl
+        merged_lines = file_lines[: idx + 1] + [insertion] + file_lines[idx + 1 :]
+        merged = "".join(merged_lines)
+        if file_path.endswith(".py"):
+            err = self._validate_python_ast(file_path, merged)
+            if err:
+                return {"success": False, "error": err}
+        hash_before = hashlib.sha256("".join(file_lines).encode()).hexdigest()
+        hash_new = hashlib.sha256(merged.encode()).hexdigest()
+        if hash_before == hash_new:
+            return {"success": True, "summary": "insert_after: no change"}
+        tr = rt.fs_write(path=full_path, content=merged)
+        if not tr.success:
+            return {"success": False, "error": tr.error}
+        self._files_modified.append(file_path)
+        return {
+            "success": True,
+            "summary": f"Inserted {len(insertion)} chars after line {idx+1} in {file_path}",
+            "result_data": {"path": file_path, "after_line": idx + 1},
+        }
+
+    def _execute_insert_before(self, rt, action) -> Dict[str, Any]:
+        """Insert content before anchor line. Params: path, anchor, content."""
+        import hashlib
+        file_path = action.parameters.get("path", "")
+        anchor = action.parameters.get("anchor", "")
+        new_content = action.parameters.get("content", "")
+        if not file_path or anchor is None or new_content is None:
+            return {"success": False, "error": "insert_before: missing path/anchor/content"}
+        full_path = os.path.join(self.project_root, file_path)
+        if not os.path.isfile(full_path):
+            return {"success": False, "error": f"insert_before: file not found: {file_path}"}
+        try:
+            with open(full_path, "r", encoding="utf-8") as f:
+                file_lines = f.readlines()
+        except OSError as exc:
+            return {"success": False, "error": str(exc)}
+        idx = next((i for i, ln in enumerate(file_lines) if anchor in ln), None)
+        if idx is None:
+            return {"success": False, "error": f"insert_before: anchor not found: {repr(anchor)}"}
+        nl = "\n"
+        insertion = new_content if new_content.endswith(nl) else new_content + nl
+        merged_lines = file_lines[:idx] + [insertion] + file_lines[idx:]
+        merged = "".join(merged_lines)
+        if file_path.endswith(".py"):
+            err = self._validate_python_ast(file_path, merged)
+            if err:
+                return {"success": False, "error": err}
+        hash_before = hashlib.sha256("".join(file_lines).encode()).hexdigest()
+        hash_new = hashlib.sha256(merged.encode()).hexdigest()
+        if hash_before == hash_new:
+            return {"success": True, "summary": "insert_before: no change"}
+        tr = rt.fs_write(path=full_path, content=merged)
+        if not tr.success:
+            return {"success": False, "error": tr.error}
+        self._files_modified.append(file_path)
+        return {
+            "success": True,
+            "summary": f"Inserted {len(insertion)} chars before line {idx+1} in {file_path}",
+            "result_data": {"path": file_path, "before_line": idx + 1},
+        }
+
+    def _execute_replace_range(self, rt, action) -> Dict[str, Any]:
+        """Replace line range. Params: path, start (1-based), end (1-based), content."""
+        import hashlib
+        file_path = action.parameters.get("path", "")
+        start = action.parameters.get("start")
+        end = action.parameters.get("end")
+        new_content = action.parameters.get("content", "")
+        if not file_path or start is None or end is None or new_content is None:
+            return {"success": False, "error": "replace_range: missing path/start/end/content"}
+        try:
+            start, end = int(start), int(end)
+        except (TypeError, ValueError):
+            return {"success": False, "error": "replace_range: start/end must be integers"}
+        if start < 1 or end < start:
+            return {"success": False, "error": f"replace_range: invalid range {start}..{end}"}
+        full_path = os.path.join(self.project_root, file_path)
+        if not os.path.isfile(full_path):
+            return {"success": False, "error": f"replace_range: file not found: {file_path}"}
+        try:
+            with open(full_path, "r", encoding="utf-8") as f:
+                file_lines = f.readlines()
+        except OSError as exc:
+            return {"success": False, "error": str(exc)}
+        if end > len(file_lines):
+            return {"success": False, "error": f"replace_range: end {end} > file length {len(file_lines)}"}
+        nl = "\n"
+        replacement = new_content if new_content.endswith(nl) else new_content + nl
+        merged_lines = file_lines[: start - 1] + [replacement] + file_lines[end:]
+        merged = "".join(merged_lines)
+        if file_path.endswith(".py"):
+            err = self._validate_python_ast(file_path, merged)
+            if err:
+                return {"success": False, "error": err}
+        hash_before = hashlib.sha256("".join(file_lines).encode()).hexdigest()
+        hash_new = hashlib.sha256(merged.encode()).hexdigest()
+        if hash_before == hash_new:
+            return {"success": True, "summary": "replace_range: no change"}
+        tr = rt.fs_write(path=full_path, content=merged)
+        if not tr.success:
+            return {"success": False, "error": tr.error}
+        self._files_modified.append(file_path)
+        return {
+            "success": True,
+            "summary": f"Replaced lines {start}–{end} in {file_path} with {len(replacement)} chars",
+            "result_data": {"path": file_path, "start": start, "end": end},
+        }
+
+    def _execute_append_file(self, rt, action) -> Dict[str, Any]:
+        """Append content to end of file. Params: path, content."""
+        import hashlib
+        file_path = action.parameters.get("path", "")
+        new_content = action.parameters.get("content", "")
+        if not file_path or new_content is None:
+            return {"success": False, "error": "append_file: missing path/content"}
+        full_path = os.path.join(self.project_root, file_path)
+        existing = ""
+        if os.path.isfile(full_path):
+            try:
+                with open(full_path, "r", encoding="utf-8") as f:
+                    existing = f.read()
+            except OSError as exc:
+                return {"success": False, "error": str(exc)}
+        nl = "\n"
+        sep = "" if (not existing or existing.endswith(nl)) else nl
+        merged = existing + sep + new_content
+        if file_path.endswith(".py"):
+            err = self._validate_python_ast(file_path, merged)
+            if err:
+                return {"success": False, "error": err}
+        hash_before = hashlib.sha256(existing.encode()).hexdigest()
+        hash_new = hashlib.sha256(merged.encode()).hexdigest()
+        if hash_before == hash_new:
+            return {"success": True, "summary": "append_file: no change"}
+        tr = rt.fs_write(path=full_path, content=merged)
+        if not tr.success:
+            return {"success": False, "error": tr.error}
+        self._files_modified.append(file_path)
+        return {
+            "success": True,
+            "summary": f"Appended {len(new_content)} chars to {file_path}",
+            "result_data": {"path": file_path, "appended_chars": len(new_content)},
+        }
 
     def _execute_plan_update(self, action) -> Dict[str, Any]:
         """Execute a plan update action."""

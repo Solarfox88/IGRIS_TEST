@@ -40,6 +40,24 @@ You propose ONE structured action at a time as JSON. IGRIS validates, risk-class
 
 You NEVER execute commands directly. You ALWAYS propose through the action schema.
 
+## File Editing Policy (CRITICAL — read before any write)
+When editing **existing** source files (.py, .js, .ts, .html, .css, .md, .json, .yaml, etc.):
+- NEVER use `write_file` to replace a large file with a small snippet.
+  A file with hundreds of lines must NOT be replaced with 4 lines.
+- For **small additions** to existing files: use `insert_after`, `insert_before`, or `append_file`.
+- For **targeted replacements**: use `replace_range` (specify exact start/end line numbers).
+- For **full file rewrites**: use `write_file` ONLY when the new content is a complete, valid replacement
+  (i.e. new content ≥ 30% of current file size). Otherwise IGRIS will block it.
+- `write_file` is safe for **new files** (file does not exist yet).
+- When in doubt, use `propose_patch` to preview the diff first.
+
+Available safe-edit actions:
+  insert_after(path, anchor, content)   — add lines after the anchor line
+  insert_before(path, anchor, content)  — add lines before the anchor line
+  replace_range(path, start, end, content) — replace lines start..end (1-based)
+  append_file(path, content)            — add lines at end of file
+  propose_patch(path, content)          — preview diff without writing
+
 ## Action Schema
 Respond with exactly one JSON object (no markdown, no explanation outside JSON):
 
@@ -96,7 +114,11 @@ ACTION_TYPE_DOCS: Dict[str, str] = {
     "find_files": 'Find files by name/glob pattern. Params: {{"pattern": "..."}}',
     "list_directory": 'List directory contents. Params: {{"path": "...", "depth": 1 (optional)}}',
     "read_file_range": 'Read specific lines from a file. Params: {{"path": "...", "start": 1 (optional), "end": 50 (optional)}}',
-    "write_file": 'Write/create a file. Params: {{"path": "...", "content": "..."}}',
+    "write_file": 'Write/create a NEW file or FULL replacement (≥30% of existing size). Params: {{"path": "...", "content": "..."}}',
+    "insert_after": 'Insert lines after anchor. Params: {{"path": "...", "anchor": "...", "content": "..."}}',
+    "insert_before": 'Insert lines before anchor. Params: {{"path": "...", "anchor": "...", "content": "..."}}',
+    "replace_range": 'Replace explicit line range (1-based). Params: {{"path": "...", "start": 10, "end": 15, "content": "..."}}',
+    "append_file": 'Append content to end of file. Params: {{"path": "...", "content": "..."}}',
     "propose_patch": 'Propose a code patch. Params: {{"files": [{{"path": "...", "action": "modify", "content": "...", "original": "..."}}]}}',
     "apply_patch": 'Apply a validated patch. Params: {{"patch_id": "..."}}',
     "run_tests": 'Run test suite. Params: {{"target": "..." (optional), "args": "..." (optional)}}',

@@ -294,8 +294,17 @@ class TestRunVerify:
         result = run_verify(str(tmp_path))
         assert result["checks"]["project_root"] is True
 
-    def test_verify_nonexistent_root(self):
-        result = run_verify("/nonexistent/12345")
+    def test_verify_nonexistent_root(self, tmp_path):
+        """Use a guaranteed-nonexistent subdir of tmp_path.
+
+        /nonexistent/12345 is hardcoded and can exist in some CI environments.
+        tmp_path is provided by pytest and is always a fresh temp directory;
+        a sub-path that was never created is guaranteed to not exist.
+        """
+        missing = tmp_path / "does_not_exist_subdirectory"
+        # Sanity: must not exist
+        assert not missing.exists()
+        result = run_verify(str(missing))
         assert result["checks"]["project_root"] is False
         assert result["ok"] is False
 

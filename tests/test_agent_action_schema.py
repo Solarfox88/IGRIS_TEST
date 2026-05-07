@@ -38,12 +38,13 @@ class TestSchemaConstants:
 
     def test_action_types_are_tuple(self):
         assert isinstance(ACTION_TYPES, tuple)
-        assert len(ACTION_TYPES) == 18
+        assert len(ACTION_TYPES) == 22  # +4 safe-edit actions (#76)
 
     def test_all_required_action_types_present(self):
         required = {
             "search_code", "find_files", "list_directory", "read_file_range",
-            "write_file", "propose_patch", "apply_patch", "run_tests",
+            "write_file", "insert_after", "insert_before", "replace_range", "append_file",
+            "propose_patch", "apply_patch", "run_tests",
             "git_status", "git_diff", "shell_template", "raw_shell_proposal",
             "http_check", "update_plan", "record_memory",
             "ask_user", "finish", "blocked",

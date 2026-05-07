@@ -320,4 +320,9 @@ class TestDashboardAPI:
                 "system_info.py", "safe_commands.py",
                 "test_system_info.py", "SYSTEM_INFO.md",
                 "README.md", "PREPARED_NOT_IMPLEMENTED.md",
+                # Files modified by #76:
+                "agent_action_schema.py", "agent_reasoning_loop.py",
+                "prompt_contract.py", "test_write_guard.py",
+                "test_agent_action_schema.py", "test_issue74_toolruntime_dispatcher.py",
+                "test_doctor.py",
             ]), f"Unexpected changed file: {line}"
