@@ -393,6 +393,72 @@ class TestInsertAfter:
             text = f.read()
         assert text.count("@app.get('/api/version-info')") == 1
 
+    def test_insert_after_blocks_app_route_before_app_init(self, tmp_path):
+        original = textwrap.dedent("""\
+            from fastapi import FastAPI
+
+
+            def create_app() -> FastAPI:
+                \"\"\"Create and configure the FastAPI application.\"\"\"
+                app = FastAPI(title="IGRIS_GPT", version="0.1.0")
+                return app
+        """)
+        route = (
+            "\n"
+            "    @app.get('/api/version-info')\n"
+            "    async def version_info():\n"
+            "        return {'app': 'IGRIS_GPT', 'status': 'ok'}\n"
+        )
+        _write_tmp(str(tmp_path), "server.py", original)
+        loop = _make_loop(str(tmp_path))
+        rt = _mock_rt()
+        action = _action(
+            "insert_after",
+            path="server.py",
+            anchor="def create_app() -> FastAPI:",
+            content=route,
+        )
+
+        result = loop._execute_insert_after(rt, action)
+
+        assert result["success"] is False
+        assert "before app = FastAPI" in result["error"]
+        with open(os.path.join(str(tmp_path), "server.py")) as f:
+            text = f.read()
+        assert "@app.get('/api/version-info')" not in text
+
+    def test_insert_after_allows_app_route_after_app_init(self, tmp_path):
+        original = textwrap.dedent("""\
+            from fastapi import FastAPI
+
+
+            def create_app() -> FastAPI:
+                app = FastAPI(title="IGRIS_GPT", version="0.1.0")
+                return app
+        """)
+        route = (
+            "\n"
+            "    @app.get('/api/version-info')\n"
+            "    async def version_info():\n"
+            "        return {'app': 'IGRIS_GPT', 'status': 'ok'}\n"
+        )
+        _write_tmp(str(tmp_path), "server.py", original)
+        loop = _make_loop(str(tmp_path))
+        rt = _mock_rt()
+        action = _action(
+            "insert_after",
+            path="server.py",
+            anchor='app = FastAPI(title="IGRIS_GPT", version="0.1.0")',
+            content=route,
+        )
+
+        result = loop._execute_insert_after(rt, action)
+
+        assert result["success"] is True, result.get("error", "")
+        with open(os.path.join(str(tmp_path), "server.py")) as f:
+            text = f.read()
+        assert "@app.get('/api/version-info')" in text
+
 
 # ---------------------------------------------------------------------------
 # 5. insert_before

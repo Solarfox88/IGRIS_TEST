@@ -1183,6 +1183,11 @@ class AgentReasoningLoop:
             return {"success": False, "error": f"insert_after: anchor not found: {repr(anchor)}"}
         nl = "\n"
         insertion = new_content if new_content.endswith(nl) else new_content + nl
+        if self._inserts_app_route_before_app_init(file_lines, idx, insertion, after=True):
+            return {
+                "success": False,
+                "error": "insert_after: refusing to insert @app route before app = FastAPI initialization",
+            }
         if self._insertion_already_near_anchor(file_lines, idx, insertion, after=True):
             return {"success": True, "summary": "insert_after: no change; content already present near anchor"}
         merged_lines = file_lines[: idx + 1] + [insertion] + file_lines[idx + 1 :]
@@ -1226,6 +1231,11 @@ class AgentReasoningLoop:
             return {"success": False, "error": f"insert_before: anchor not found: {repr(anchor)}"}
         nl = "\n"
         insertion = new_content if new_content.endswith(nl) else new_content + nl
+        if self._inserts_app_route_before_app_init(file_lines, idx, insertion, after=False):
+            return {
+                "success": False,
+                "error": "insert_before: refusing to insert @app route before app = FastAPI initialization",
+            }
         if self._insertion_already_near_anchor(file_lines, idx, insertion, after=False):
             return {"success": True, "summary": "insert_before: no change; content already present near anchor"}
         merged_lines = file_lines[:idx] + [insertion] + file_lines[idx:]
@@ -1267,6 +1277,20 @@ class AgentReasoningLoop:
             start = max(0, anchor_idx - window_size)
             window = "".join(file_lines[start:anchor_idx])
         return wanted in window.strip()
+
+    @staticmethod
+    def _inserts_app_route_before_app_init(
+        file_lines: List[str],
+        anchor_idx: int,
+        insertion: str,
+        *,
+        after: bool,
+    ) -> bool:
+        if "@app." not in insertion:
+            return False
+        insertion_point_end = anchor_idx + 1 if after else anchor_idx
+        prior_text = "".join(file_lines[:insertion_point_end])
+        return "app = FastAPI" not in prior_text
 
     def _execute_replace_range(self, rt, action) -> Dict[str, Any]:
         """Replace line range. Params: path, start (1-based), end (1-based), content."""
