@@ -38,6 +38,7 @@ class FakeBackend:
         self.diff = CommandResult(True, "+safe")
         self.commands = []
         self.test_timeouts = []
+        self.restore_result = CommandResult(True, "restored")
 
     def git_status(self):
         self.commands.append("git_status")
@@ -116,7 +117,7 @@ class FakeBackend:
 
     def restore_dangerous_diff(self):
         self.commands.append("restore")
-        return CommandResult(False, "", "not enabled")
+        return self.restore_result
 
 
 def _config(**overrides):
@@ -376,6 +377,68 @@ def test_supervisor_passes_after_one_repair_cycle():
     assert run.status == "completed"
     assert run.repair_cycles_used == 1
     assert any(event.phase == "repair_reasoning" for event in run.events)
+
+
+def test_supervisor_blocks_and_restores_when_repair_reasoning_blocks():
+    backend = FakeBackend()
+    backend.reasoning_results = [
+        {
+            "status": "stopped",
+            "stop_reason": "max_steps",
+            "files_modified": [],
+            "final_summary": "stopped",
+            "goal": "rank task with tests",
+        },
+        {
+            "status": "blocked",
+            "stop_reason": "ask_user",
+            "files_modified": ["tests/test_reasoning_loop.py"],
+            "final_summary": "needs human",
+            "goal": "repair",
+        },
+    ]
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+        _config(max_rank_attempts=2, max_repair_cycles=1)
+    )
+
+    assert run.status == "blocked"
+    assert run.failure_class == "max_steps"
+    assert "restore" in backend.commands
+    assert sum(1 for command in backend.commands if command.startswith("branch:")) == 1
+    assert any(event.phase == "repair_restore" for event in run.events)
+
+
+def test_supervisor_blocks_and_restores_when_repair_tests_fail():
+    backend = FakeBackend()
+    backend.reasoning_results = [
+        {
+            "status": "stopped",
+            "stop_reason": "max_steps",
+            "files_modified": [],
+            "final_summary": "stopped",
+            "goal": "rank task with tests",
+        },
+        {
+            "status": "finished",
+            "stop_reason": "finish",
+            "files_modified": ["igris/core/fix.py"],
+            "final_summary": "repair",
+            "goal": "repair",
+        },
+    ]
+    backend.full_tests = [
+        CommandResult(True, "baseline ok"),
+        CommandResult(True, "rank full ok"),
+        CommandResult(False, "repair tests failed", "", 1),
+    ]
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+        _config(max_rank_attempts=2, max_repair_cycles=1)
+    )
+
+    assert run.status == "blocked"
+    assert "restore" in backend.commands
+    assert sum(1 for command in backend.commands if command.startswith("branch:")) == 1
+    assert any(event.phase == "repair_restore" for event in run.events)
 
 
 def test_supervisor_defers_restart_when_configured():

@@ -566,7 +566,8 @@ class SelfRepairSupervisor:
 
             repair_cycles += 1
             run.repair_cycles_used = repair_cycles
-            self._repair_cycle(run, config, failure, repair_cycles)
+            if not self._repair_cycle(run, config, failure, repair_cycles):
+                return self._blocked(run, failure, "Repair cycle failed validation")
 
         return self._blocked(run, run.failure_class or "max_rank_attempts", "Rank attempts exhausted")
 
@@ -587,7 +588,7 @@ class SelfRepairSupervisor:
             and smoke.success
         )
 
-    def _repair_cycle(self, run: SupervisorRun, config: RankSupervisorConfig, failure: str, cycle: int) -> None:
+    def _repair_cycle(self, run: SupervisorRun, config: RankSupervisorConfig, failure: str, cycle: int) -> bool:
         title = f"{config.rank_id}: supervised repair for {failure}"
         body = f"Supervisor detected {failure} during run {run.run_id}."
         if config.allow_github_pr and not config.dry_run:
@@ -606,6 +607,10 @@ class SelfRepairSupervisor:
             timeout=config.reasoning_timeout_seconds,
         )
         run.add("repair_reasoning", str(result.get("status", "")), result.get("final_summary", ""))
+        if result.get("status") != "finished":
+            restore = self.backend.restore_dangerous_diff()
+            run.add("repair_restore", "success" if restore.success else "failure", _command_detail(restore))
+            return False
         run.add(
             "repair_tests",
             "running",
@@ -614,6 +619,11 @@ class SelfRepairSupervisor:
         )
         tests = self.backend.run_tests(timeout=config.test_timeout_seconds)
         run.add("repair_tests", "success" if tests.success else "failure", _command_detail(tests))
+        if not tests.success:
+            restore = self.backend.restore_dangerous_diff()
+            run.add("repair_restore", "success" if restore.success else "failure", _command_detail(restore))
+            return False
+        return True
 
     def _complete_rank(self, run: SupervisorRun, config: RankSupervisorConfig, branch: str) -> SupervisorRun:
         if config.dry_run:
