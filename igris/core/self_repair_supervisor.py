@@ -8,6 +8,7 @@ backend runs fixed argv commands only, and tests can inject a fake backend.
 from __future__ import annotations
 
 import subprocess
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -65,6 +66,7 @@ class RankSupervisorConfig:
     required_smoke_endpoints: List[str] = field(default_factory=list)
     targeted_tests: List[str] = field(default_factory=list)
     dry_run: bool = True
+    defer_service_restart: bool = False
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RankSupervisorConfig":
@@ -79,6 +81,7 @@ class RankSupervisorConfig:
             required_smoke_endpoints=list(data.get("required_smoke_endpoints", [])),
             targeted_tests=list(data.get("targeted_tests", [])),
             dry_run=bool(data.get("dry_run", True)),
+            defer_service_restart=bool(data.get("defer_service_restart", False)),
         )
 
 
@@ -316,9 +319,22 @@ class SelfRepairSupervisor:
         self.project_root = project_root
         self.backend = backend or LocalSupervisorBackend(project_root)
 
-    def run(self, config: RankSupervisorConfig) -> SupervisorRun:
-        run = SupervisorRun(run_id=uuid.uuid4().hex[:12], rank_id=config.rank_id)
+    def run(
+        self,
+        config: RankSupervisorConfig,
+        run: Optional[SupervisorRun] = None,
+    ) -> SupervisorRun:
+        run = run or SupervisorRun(run_id=uuid.uuid4().hex[:12], rank_id=config.rank_id)
         run.add("start", "running", "Supervisor started", dry_run=config.dry_run)
+        restart_command = config.service_restart_command
+        if config.defer_service_restart and restart_command:
+            run.add(
+                "service_restart",
+                "deferred",
+                "Service restart deferred because this supervised run is owned by the API process.",
+                command=restart_command,
+            )
+            restart_command = ""
 
         status = self.backend.git_status()
         run.add("git_status", "success" if status.success else "failure", status.output or status.error)
@@ -335,7 +351,7 @@ class SelfRepairSupervisor:
         if not baseline.success:
             return self._blocked(run, "pytest_failure", "Baseline tests failed")
 
-        smoke = self.backend.smoke(config.required_smoke_endpoints, config.service_restart_command)
+        smoke = self.backend.smoke(config.required_smoke_endpoints, restart_command)
         run.add("baseline_smoke", "success" if smoke.success else "failure", smoke.output or smoke.error)
         if not smoke.success:
             return self._blocked(run, "infrastructure_bug", "Baseline smoke failed")
@@ -374,7 +390,7 @@ class SelfRepairSupervisor:
             else:
                 targeted = self.backend.run_tests(config.targeted_tests) if config.targeted_tests else CommandResult(True, "No targeted tests configured")
                 full = self.backend.run_tests()
-                final_smoke = self.backend.smoke(config.required_smoke_endpoints, config.service_restart_command)
+                final_smoke = self.backend.smoke(config.required_smoke_endpoints, restart_command)
                 run.add("targeted_tests", "success" if targeted.success else "failure", targeted.output or targeted.error)
                 run.add("full_pytest", "success" if full.success else "failure", full.output or full.error)
                 run.add("smoke", "success" if final_smoke.success else "failure", final_smoke.output or final_smoke.error)
@@ -476,19 +492,53 @@ class SelfRepairSupervisor:
 
 
 RUN_STORE: Dict[str, SupervisorRun] = {}
+RUN_LOCK = threading.RLock()
 
 
 def start_supervised_rank(data: Dict[str, Any], project_root: str) -> SupervisorRun:
     config = RankSupervisorConfig.from_dict(data)
     supervisor = SelfRepairSupervisor(project_root=project_root)
     run = supervisor.run(config)
-    RUN_STORE[run.run_id] = run
+    with RUN_LOCK:
+        RUN_STORE[run.run_id] = run
+    return run
+
+
+def start_supervised_rank_async(data: Dict[str, Any], project_root: str) -> SupervisorRun:
+    """Create a run immediately and execute it in a background worker."""
+    payload = dict(data)
+    payload["defer_service_restart"] = True
+    config = RankSupervisorConfig.from_dict(payload)
+    run = SupervisorRun(run_id=uuid.uuid4().hex[:12], rank_id=config.rank_id)
+    run.add("queued", "running", "Supervisor run accepted for background execution")
+    with RUN_LOCK:
+        RUN_STORE[run.run_id] = run
+
+    def _worker() -> None:
+        try:
+            supervisor = SelfRepairSupervisor(project_root=project_root)
+            supervisor.run(config, run=run)
+        except Exception as exc:
+            run.status = "blocked"
+            run.outcome = "Blocked"
+            run.failure_class = "supervisor_bug"
+            run.add("exception", "blocked", str(exc))
+            run.report = {"autonomous": False, "blocked_reason": "Supervisor worker crashed"}
+
+    thread = threading.Thread(
+        target=_worker,
+        name=f"rank-supervisor-{run.run_id}",
+        daemon=True,
+    )
+    thread.start()
     return run
 
 
 def get_supervised_run(run_id: str) -> Optional[SupervisorRun]:
-    return RUN_STORE.get(run_id)
+    with RUN_LOCK:
+        return RUN_STORE.get(run_id)
 
 
 def list_supervised_runs() -> List[SupervisorRun]:
-    return list(RUN_STORE.values())
+    with RUN_LOCK:
+        return list(RUN_STORE.values())

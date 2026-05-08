@@ -1,10 +1,16 @@
+import threading
+import time
+
 from fastapi.testclient import TestClient
 
 from igris.core.self_repair_supervisor import (
     CommandResult,
     RankSupervisorConfig,
+    RUN_STORE,
     SelfRepairSupervisor,
     classify_failure,
+    get_supervised_run,
+    start_supervised_rank_async,
 )
 from igris.web.server import create_app
 
@@ -66,7 +72,7 @@ class FakeBackend:
         return CommandResult(True, "full ok")
 
     def smoke(self, endpoints, restart_command=""):
-        self.commands.append(f"smoke:{endpoints}")
+        self.commands.append(f"smoke:{endpoints}:{restart_command}")
         return self.smoke_result
 
     def commit(self, message, files=None):
@@ -202,6 +208,51 @@ def test_supervisor_passes_after_one_repair_cycle():
     assert any(event.phase == "repair_reasoning" for event in run.events)
 
 
+def test_supervisor_defers_restart_when_configured():
+    backend = FakeBackend()
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+        _config(service_restart_command="sudo -n systemctl restart igris", defer_service_restart=True)
+    )
+
+    assert run.status == "completed"
+    assert any(event.phase == "service_restart" and event.status == "deferred" for event in run.events)
+    assert all(not command.endswith(":sudo -n systemctl restart igris") for command in backend.commands)
+
+
+def test_async_supervisor_start_is_observable_before_work_finishes(monkeypatch):
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowSupervisor:
+        def __init__(self, project_root):
+            self.project_root = project_root
+
+        def run(self, config, run=None):
+            assert config.defer_service_restart is True
+            started.set()
+            release.wait(timeout=2)
+            run.status = "completed"
+            run.outcome = "Completed"
+            run.add("done", "success", "finished")
+            return run
+
+    import igris.core.self_repair_supervisor as mod
+
+    RUN_STORE.clear()
+    monkeypatch.setattr(mod, "SelfRepairSupervisor", SlowSupervisor)
+    run = start_supervised_rank_async({"goal": "rank", "rank_id": "A"}, "/tmp/project")
+
+    assert run.status == "running"
+    assert get_supervised_run(run.run_id) is run
+    assert started.wait(timeout=1)
+    assert get_supervised_run(run.run_id).status == "running"
+    release.set()
+    deadline = time.time() + 2
+    while time.time() < deadline and get_supervised_run(run.run_id).status == "running":
+        time.sleep(0.01)
+    assert get_supervised_run(run.run_id).status == "completed"
+
+
 def test_rank_supervisor_api_dry_run_blocks_dirty_repo(monkeypatch):
     class DirtySupervisor:
         def run(self, config):
@@ -216,7 +267,7 @@ def test_rank_supervisor_api_dry_run_blocks_dirty_repo(monkeypatch):
         mod.RUN_STORE[run.run_id] = run
         return run
 
-    monkeypatch.setattr(mod, "start_supervised_rank", fake_start)
+    monkeypatch.setattr(mod, "start_supervised_rank_async", fake_start)
     client = TestClient(create_app())
     resp = client.post("/api/rank/run-supervised", json={"goal": "rank", "dry_run": True})
 

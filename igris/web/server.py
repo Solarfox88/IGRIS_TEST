@@ -2624,11 +2624,11 @@ def create_app() -> FastAPI:
     @app.post("/api/rank/run-supervised")
     async def api_rank_run_supervised(request: Request) -> Dict[str, object]:
         """Run a controlled rank mission through the self-repair supervisor."""
-        from igris.core.self_repair_supervisor import start_supervised_rank
+        from igris.core.self_repair_supervisor import start_supervised_rank_async
         content = await request.json()
         if not content.get("goal"):
             raise HTTPException(status_code=400, detail="goal required")
-        run = start_supervised_rank(content, project_root=str(CONFIG.project_root))
+        run = start_supervised_rank_async(content, project_root=str(CONFIG.project_root))
         return run.to_dict()
 
     @app.get("/api/rank/runs/{run_id}")
