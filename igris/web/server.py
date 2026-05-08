@@ -57,6 +57,10 @@ STATIC_DIR = MODULE_DIR / "static"
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(title="IGRIS_GPT", version="0.1.0")
+
+    @app.get('/api/rank/status')
+    async def get_rank_status():
+        return {'rank': 'A', 'status': 'ok', 'agent': 'IGRIS_GPT'}
     @app.get('/api/version-info')
     async def version_info():
         return {'app': 'IGRIS_GPT', 'status': 'ok'}
