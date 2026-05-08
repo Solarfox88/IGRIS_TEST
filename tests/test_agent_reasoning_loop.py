@@ -381,6 +381,25 @@ class TestRunWithMockedLLM:
         assert result.status == "blocked"
         assert result.stop_reason == "ask_user"
 
+    def test_ask_user_can_be_suppressed_for_controlled_runs(self):
+        loop = self._make_loop()
+        ask_action = AgentAction(
+            mode="coordinator",
+            action_type="ask_user",
+            reason="Need clarification",
+            parameters={"question": "Which file should I modify?"},
+            risk_hint="low",
+            confidence=0.8,
+        )
+        with patch.object(loop, "_decide_action", return_value=(ask_action, [])):
+            result = loop.run(
+                goal="Unclear task",
+                initial_context={"must_not_ask_user": True},
+            )
+        assert result.status == "stopped"
+        assert result.stop_reason == "max_steps"
+        assert result.steps[0].outcome == "skipped"
+
     def test_navigation_then_finish(self):
         loop = self._make_loop()
         call_count = [0]

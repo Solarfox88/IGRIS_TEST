@@ -260,6 +260,8 @@ class AgentReasoningLoop:
                 result.failed_steps += 1
                 self._consecutive_errors += 1
                 result.errors.append(step.error or f"Step {step_num} failed")
+            elif step.outcome == "ask_user" and self._suppress_human_gate():
+                step.outcome = "skipped"
             elif step.outcome in ("blocked", "finish", "ask_user"):
                 result.stop_reason = step.outcome
                 if step.outcome == "finish":
@@ -279,6 +281,12 @@ class AgentReasoningLoop:
         result.final_summary = self._build_summary(result)
 
         return result
+
+    def _suppress_human_gate(self) -> bool:
+        return bool(
+            self._world_state.get("must_not_ask_user")
+            or self._world_state.get("suppress_human_gate")
+        )
 
     # ------------------------------------------------------------------
     # Anti-repeat helpers
@@ -495,12 +503,13 @@ class AgentReasoningLoop:
                 self._store_tool_result(action.action_type, result_data)
 
             # 4c. Record for anti-repeat tracking
-            self._record_action_history(
-                action.action_type,
-                action.parameters,
-                step.outcome,
-                result_data=result_data,
-            )
+            if not (action.action_type == "ask_user" and self._suppress_human_gate()):
+                self._record_action_history(
+                    action.action_type,
+                    action.parameters,
+                    step.outcome,
+                    result_data=result_data,
+                )
 
             if not exec_result.get("success", False):
                 step.error = exec_result.get("error", "Execution failed")
