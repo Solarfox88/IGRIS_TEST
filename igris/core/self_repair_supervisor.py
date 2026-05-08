@@ -183,10 +183,28 @@ class LocalSupervisorBackend:
         self.project_root = Path(project_root)
 
     def _subprocess_env(self) -> Dict[str, str]:
-        env = os.environ.copy()
+        allowlist = {
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "LOGNAME",
+            "PATH",
+            "PYTHONPATH",
+            "SHELL",
+            "TERM",
+            "TMPDIR",
+            "TZ",
+            "USER",
+        }
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key in allowlist and value
+        }
+        env.setdefault("PATH", os.defpath)
         env["IGRIS_SUPERVISOR_CHILD"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
-        env.pop("PYTEST_CURRENT_TEST", None)
         return env
 
     def _run(self, cmd: List[str], timeout: int = 120) -> CommandResult:

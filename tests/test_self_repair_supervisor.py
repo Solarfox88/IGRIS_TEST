@@ -169,6 +169,9 @@ def test_local_backend_runs_commands_in_isolated_child_process(monkeypatch, tmp_
     import igris.core.self_repair_supervisor as mod
 
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_x.py::test_y")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-should-not-leak")
+    monkeypatch.setenv("VASTAI_API_KEY", "")
+    monkeypatch.setenv("PROJECT_ROOT", "/service/root")
     monkeypatch.setattr(mod.subprocess, "run", fake_run)
 
     result = LocalSupervisorBackend(str(tmp_path)).run_tests(timeout=31)
@@ -180,6 +183,9 @@ def test_local_backend_runs_commands_in_isolated_child_process(monkeypatch, tmp_
     assert captured["env"]["IGRIS_SUPERVISOR_CHILD"] == "1"
     assert captured["env"]["PYTHONUNBUFFERED"] == "1"
     assert "PYTEST_CURRENT_TEST" not in captured["env"]
+    assert "OPENAI_API_KEY" not in captured["env"]
+    assert "VASTAI_API_KEY" not in captured["env"]
+    assert "PROJECT_ROOT" not in captured["env"]
 
 
 def test_supervisor_event_serializes_bytes_safely():
