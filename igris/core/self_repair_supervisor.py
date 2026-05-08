@@ -601,6 +601,10 @@ class SelfRepairSupervisor:
                 "For existing large files use insert_after, insert_before, "
                 "replace_range or append_file. Never full-file write server.py."
             ),
+            "fastapi_test_policy": (
+                "API tests must import create_app from igris.web.server and use "
+                "TestClient(create_app()). Do not import app from igris.web.server."
+            ),
         }
         for target in config.targeted_tests:
             if target.startswith("tests/test_") and target.endswith(".py"):

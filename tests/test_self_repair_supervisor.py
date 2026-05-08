@@ -530,6 +530,8 @@ def test_supervisor_passes_requested_rank_test_file_to_reasoning_context():
     assert backend.last_reasoning_context["must_create_test_file"] == "tests/test_rank_status.py"
     assert backend.last_reasoning_context["expected_endpoint_file"] == "igris/web/server.py"
     assert backend.last_reasoning_context["must_not_ask_user"] is True
+    assert "TestClient(create_app())" in backend.last_reasoning_context["fastapi_test_policy"]
+    assert "Do not import app" in backend.last_reasoning_context["fastapi_test_policy"]
     assert "Create tests/test_rank_status.py directly" in backend.last_reasoning_context["anti_loop_instruction"]
 
 
