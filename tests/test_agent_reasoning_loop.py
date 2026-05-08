@@ -212,6 +212,48 @@ class TestActionRouting:
         assert result["success"] is True
         assert "Which endpoint format?" in result["summary"]
 
+    def test_run_tests_target_becomes_pytest_arg(self):
+        loop = AgentReasoningLoop(project_root="/tmp")
+        rt = MagicMock()
+        rt.run_tests.return_value = MagicMock(
+            success=True,
+            output="1 passed",
+            error="",
+        )
+        action = AgentAction(
+            mode="coder",
+            action_type="run_tests",
+            reason="run targeted test",
+            parameters={"target": "tests/test_version_info.py"},
+        )
+
+        with patch.object(loop, "_get_tool_runtime", return_value=rt):
+            result = loop._execute_action(action, "tool_runtime")
+
+        assert result["success"] is True
+        rt.run_tests.assert_called_once_with(args=["tests/test_version_info.py"])
+
+    def test_run_tests_args_take_precedence_over_target(self):
+        loop = AgentReasoningLoop(project_root="/tmp")
+        rt = MagicMock()
+        rt.run_tests.return_value = MagicMock(
+            success=True,
+            output="1 passed",
+            error="",
+        )
+        action = AgentAction(
+            mode="coder",
+            action_type="run_tests",
+            reason="run explicit args",
+            parameters={"target": "tests/test_version_info.py", "args": "tests/test_other.py -q"},
+        )
+
+        with patch.object(loop, "_get_tool_runtime", return_value=rt):
+            result = loop._execute_action(action, "tool_runtime")
+
+        assert result["success"] is True
+        rt.run_tests.assert_called_once_with(args=["tests/test_other.py", "-q"])
+
     def test_terminal_finish_route(self):
         loop = AgentReasoningLoop(project_root="/tmp")
         action = AgentAction(

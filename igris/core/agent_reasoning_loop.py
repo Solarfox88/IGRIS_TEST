@@ -745,6 +745,27 @@ class AgentReasoningLoop:
         from igris.core.tool_runtime import ToolRuntime
         return ToolRuntime(project_root=self.project_root)
 
+    @staticmethod
+    def _normalize_run_test_args(parameters: Dict[str, Any]) -> List[str]:
+        import shlex
+
+        args = parameters.get("args")
+        if args:
+            if isinstance(args, str):
+                return shlex.split(args)
+            if isinstance(args, list):
+                return [str(arg) for arg in args]
+            return [str(args)]
+
+        target = parameters.get("target")
+        if not target:
+            return []
+        if isinstance(target, str):
+            return [target]
+        if isinstance(target, list):
+            return [str(item) for item in target]
+        return [str(target)]
+
     def _execute_tool_runtime(self, action) -> Dict[str, Any]:
         """Execute a tool runtime action using specific ToolRuntime methods.
 
@@ -773,7 +794,7 @@ class AgentReasoningLoop:
                 }
 
             elif action.action_type == "run_tests":
-                test_args = action.parameters.get("args", [])
+                test_args = self._normalize_run_test_args(action.parameters)
                 tr = rt.run_tests(args=test_args if test_args else None)
                 return {
                     "success": tr.success,
