@@ -1211,10 +1211,13 @@ class AgentReasoningLoop:
         except OSError as exc:
             return {"success": False, "error": str(exc)}
         idx = next((i for i, ln in enumerate(file_lines) if anchor in ln), None)
+        if idx is None and anchor.strip() == "app = FastAPI()":
+            idx = next((i for i, ln in enumerate(file_lines) if "app = FastAPI(" in ln), None)
         if idx is None:
             return {"success": False, "error": f"insert_after: anchor not found: {repr(anchor)}"}
         nl = "\n"
         insertion = new_content if new_content.endswith(nl) else new_content + nl
+        insertion = self._normalize_app_route_insertion_indent(file_lines[idx], insertion)
         if self._inserts_app_route_after_block_header(file_lines[idx], insertion):
             return {
                 "success": False,
@@ -1353,6 +1356,24 @@ class AgentReasoningLoop:
             return False
         stripped = anchor_line.strip()
         return stripped.endswith(":") and not stripped.startswith("@")
+
+    @staticmethod
+    def _normalize_app_route_insertion_indent(anchor_line: str, insertion: str) -> str:
+        if "@app." not in insertion or "app = FastAPI(" not in anchor_line:
+            return insertion
+        anchor_indent = anchor_line[: len(anchor_line) - len(anchor_line.lstrip())]
+        if not anchor_indent:
+            return insertion
+        lines = insertion.splitlines()
+        leading_blank = bool(lines and not lines[0].strip())
+        content_lines = lines[1:] if leading_blank else lines
+        nonblank = [line for line in content_lines if line.strip()]
+        if not nonblank or nonblank[0].startswith(anchor_indent):
+            return insertion
+        normalized = [anchor_indent + line if line.strip() else line for line in content_lines]
+        if leading_blank:
+            normalized.insert(0, "")
+        return "\n".join(normalized) + ("\n" if insertion.endswith("\n") else "")
 
     @staticmethod
     def _inserts_app_route_after_decorator_line(anchor_line: str, insertion: str) -> bool:
