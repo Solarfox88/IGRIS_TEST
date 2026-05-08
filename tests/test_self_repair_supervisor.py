@@ -8,6 +8,7 @@ from igris.core.self_repair_supervisor import (
     RankSupervisorConfig,
     RUN_STORE,
     SelfRepairSupervisor,
+    SupervisorEvent,
     classify_failure,
     get_supervised_run,
     start_supervised_rank_async,
@@ -137,6 +138,27 @@ def test_failure_classifier_detects_pytest_failure():
 def test_failure_classifier_detects_destructive_diff():
     failure = classify_failure(diff="-def create_app():\n+def removed():\n")
     assert failure == "destructive_diff"
+
+
+def test_command_result_serializes_bytes_safely():
+    result = CommandResult(False, b"stdout bytes", b"stderr bytes", 124)
+    data = result.to_dict()
+
+    assert data["output"] == "stdout bytes"
+    assert data["error"] == "stderr bytes"
+
+
+def test_supervisor_event_serializes_bytes_safely():
+    event = SupervisorEvent(
+        phase="baseline_tests",
+        status="failure",
+        detail=b"Command timed out",
+        data={"raw": b"bytes"},
+    )
+    data = event.to_dict()
+
+    assert data["detail"] == "Command timed out"
+    assert data["data"]["raw"] == "bytes"
 
 
 def test_supervisor_does_not_proceed_when_workspace_dirty():

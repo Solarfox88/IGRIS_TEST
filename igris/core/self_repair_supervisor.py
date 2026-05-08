@@ -38,6 +38,18 @@ UNSAFE_STATUS_PREFIXES = (
 )
 
 
+def _safe_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _safe_redact(value: Any) -> str:
+    return redact_secrets(_safe_text(value))
+
+
 @dataclass
 class CommandResult:
     success: bool = False
@@ -48,8 +60,8 @@ class CommandResult:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "success": self.success,
-            "output": redact_secrets(self.output),
-            "error": redact_secrets(self.error),
+            "output": _safe_redact(self.output),
+            "error": _safe_redact(self.error),
             "returncode": self.returncode,
         }
 
@@ -99,8 +111,8 @@ class SupervisorEvent:
         return {
             "phase": self.phase,
             "status": self.status,
-            "detail": redact_secrets(self.detail),
-            "data": {k: redact_secrets(str(v)) for k, v in self.data.items()},
+            "detail": _safe_redact(self.detail),
+            "data": {k: _safe_redact(v) for k, v in self.data.items()},
             "timestamp": self.timestamp,
         }
 
@@ -177,7 +189,9 @@ class LocalSupervisorBackend:
                 returncode=proc.returncode,
             )
         except subprocess.TimeoutExpired as exc:
-            return CommandResult(False, exc.stdout or "", "Command timed out", 124)
+            output = _safe_text(exc.stdout)
+            error = _safe_text(exc.stderr) or "Command timed out"
+            return CommandResult(False, output, error, 124)
         except OSError as exc:
             return CommandResult(False, "", str(exc), 1)
 
