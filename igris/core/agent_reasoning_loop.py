@@ -1204,6 +1204,8 @@ class AgentReasoningLoop:
             return {"success": False, "error": f"insert_after: anchor not found: {repr(anchor)}"}
         nl = "\n"
         insertion = new_content if new_content.endswith(nl) else new_content + nl
+        if self._app_route_already_exists(file_lines, insertion):
+            return {"success": True, "summary": "insert_after: no change; FastAPI route already present"}
         if self._inserts_app_route_before_app_init(file_lines, idx, insertion, after=True):
             return {
                 "success": False,
@@ -1252,6 +1254,8 @@ class AgentReasoningLoop:
             return {"success": False, "error": f"insert_before: anchor not found: {repr(anchor)}"}
         nl = "\n"
         insertion = new_content if new_content.endswith(nl) else new_content + nl
+        if self._app_route_already_exists(file_lines, insertion):
+            return {"success": True, "summary": "insert_before: no change; FastAPI route already present"}
         if self._inserts_app_route_before_app_init(file_lines, idx, insertion, after=False):
             return {
                 "success": False,
@@ -1313,6 +1317,33 @@ class AgentReasoningLoop:
         prior_text = "".join(file_lines[:insertion_point_end])
         return "app = FastAPI" not in prior_text
 
+    @staticmethod
+    def _app_routes_in_content(content: str) -> set[tuple[str, str]]:
+        import re
+
+        return {
+            (match.group(1), match.group(2))
+            for match in re.finditer(r"@app\.(\w+)\(\s*['\"]([^'\"]+)['\"]", content)
+        }
+
+    def _app_route_already_exists(
+        self,
+        file_lines: List[str],
+        insertion: str,
+        *,
+        exclude_start: Optional[int] = None,
+        exclude_end: Optional[int] = None,
+    ) -> bool:
+        inserted_routes = self._app_routes_in_content(insertion)
+        if not inserted_routes:
+            return False
+        if exclude_start is not None and exclude_end is not None:
+            existing_text = "".join(file_lines[:exclude_start] + file_lines[exclude_end:])
+        else:
+            existing_text = "".join(file_lines)
+        existing_routes = self._app_routes_in_content(existing_text)
+        return bool(inserted_routes & existing_routes)
+
     def _execute_replace_range(self, rt, action) -> Dict[str, Any]:
         """Replace line range. Params: path, start (1-based), end (1-based), content."""
         import hashlib
@@ -1340,6 +1371,13 @@ class AgentReasoningLoop:
             return {"success": False, "error": f"replace_range: end {end} > file length {len(file_lines)}"}
         nl = "\n"
         replacement = new_content if new_content.endswith(nl) else new_content + nl
+        if self._app_route_already_exists(
+            file_lines,
+            replacement,
+            exclude_start=start - 1,
+            exclude_end=end,
+        ):
+            return {"success": True, "summary": "replace_range: no change; FastAPI route already present"}
         merged_lines = file_lines[: start - 1] + [replacement] + file_lines[end:]
         merged = "".join(merged_lines)
         if file_path.endswith(".py"):

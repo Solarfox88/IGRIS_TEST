@@ -459,6 +459,44 @@ class TestInsertAfter:
             text = f.read()
         assert "@app.get('/api/version-info')" in text
 
+    def test_insert_after_same_route_different_quotes_is_no_change(self, tmp_path):
+        original = textwrap.dedent("""\
+            from fastapi import FastAPI
+
+
+            def create_app() -> FastAPI:
+                app = FastAPI(title="IGRIS_GPT", version="0.1.0")
+
+                @app.get("/api/version-info")
+                async def version_info():
+                    return {"app": "IGRIS_GPT", "status": "ok"}
+
+                return app
+        """)
+        route = (
+            "\n"
+            "    @app.get('/api/version-info')\n"
+            "    async def get_version_info():\n"
+            "        return {'app': 'IGRIS_GPT', 'status': 'ok'}\n"
+        )
+        _write_tmp(str(tmp_path), "server.py", original)
+        loop = _make_loop(str(tmp_path))
+        rt = _mock_rt()
+        action = _action(
+            "insert_after",
+            path="server.py",
+            anchor='app = FastAPI(title="IGRIS_GPT", version="0.1.0")',
+            content=route,
+        )
+
+        result = loop._execute_insert_after(rt, action)
+
+        assert result["success"] is True
+        assert "no change" in result["summary"]
+        with open(os.path.join(str(tmp_path), "server.py")) as f:
+            text = f.read()
+        assert text.count("/api/version-info") == 1
+
 
 # ---------------------------------------------------------------------------
 # 5. insert_before
@@ -548,6 +586,45 @@ class TestReplaceRange:
         action = _action("replace_range", path="ast_rng.py", start=1, end=1, content="def foo(:\n")
         result = loop._execute_replace_range(rt, action)
         assert result["success"] is False
+
+    def test_replace_range_same_fastapi_route_is_no_change(self, tmp_path):
+        original = textwrap.dedent("""\
+            from fastapi import FastAPI
+
+
+            def create_app() -> FastAPI:
+                app = FastAPI(title="IGRIS_GPT", version="0.1.0")
+
+                @app.get("/api/version-info")
+                async def version_info():
+                    return {"app": "IGRIS_GPT", "status": "ok"}
+
+                return app
+        """)
+        replacement = (
+            "@app.get('/api/version-info')\n"
+            "async def get_version_info():\n"
+            "    return {'app': 'IGRIS_GPT', 'status': 'ok'}\n"
+        )
+        _write_tmp(str(tmp_path), "server.py", original)
+        loop = _make_loop(str(tmp_path))
+        rt = _mock_rt()
+        action = _action(
+            "replace_range",
+            path="server.py",
+            start=1,
+            end=1,
+            content=replacement,
+        )
+
+        result = loop._execute_replace_range(rt, action)
+
+        assert result["success"] is True
+        assert "no change" in result["summary"]
+        with open(os.path.join(str(tmp_path), "server.py")) as f:
+            text = f.read()
+        assert text.startswith("from fastapi import FastAPI")
+        assert text.count("/api/version-info") == 1
 
 
 # ---------------------------------------------------------------------------
