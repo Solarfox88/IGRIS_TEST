@@ -2802,7 +2802,3 @@ def run_app(application: FastAPI, host: str = "0.0.0.0", port: int = 7778) -> No
     """Run the FastAPI application using Uvicorn."""
     import uvicorn
     uvicorn.run(application, host=host, port=port, log_level="info")
-
-    @app.get('/api/rank/ui-card')
-    async def get_rank_ui_card():
-        return {'app': 'IGRIS_GPT', 'rank': 'A++', 'status': 'ok', 'capability': 'ui-visible-supervised'}
