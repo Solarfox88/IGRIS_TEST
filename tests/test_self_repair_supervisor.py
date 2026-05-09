@@ -12,6 +12,7 @@ from igris.core.self_repair_supervisor import (
     RUN_STORE,
     SelfRepairSupervisor,
     SupervisorEvent,
+    SupervisorRun,
     classify_failure,
     get_supervised_run,
     start_supervised_rank_async,
@@ -729,6 +730,57 @@ def test_supervisor_retries_repair_validation_failures_for_rank_reasons():
     assert run.status == "completed"
     assert run.repair_cycles_used == 1
     assert any(event.phase == "repair_retry" for event in run.events)
+
+
+def test_supervisor_rejects_invalid_ui_test_diff_before_validation_pytest():
+    backend = FakeBackend()
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/tests/test_rank_ui_card.py b/tests/test_rank_ui_card.py
+@@ -1,8 +1,8 @@
+ from fastapi.testclient import TestClient
+
+ from igris.web.server import create_app
+
+
+ def test_rank_ui_card_endpoint_available():
+     client = TestClient(create_app())
+-    response = client.get("/api/rank/ui-card")
++    response = client.post("/api/rank/ui-card", json={"key": "value"})
+
+     assert response.status_code == 200
+""",
+    )
+    backend.reasoning_results = [
+        {
+            "status": "finished",
+            "stop_reason": "finish",
+            "files_modified": ["igris/web/server.py", "tests/test_rank_ui_card.py"],
+            "final_summary": "ui repair",
+            "goal": "Add UI-visible rank card",
+        }
+    ]
+    backend.full_tests = [
+        CommandResult(True, "baseline ok"),
+    ]
+
+    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    run = SupervisorRun(run_id="run-1", rank_id="A")
+
+    result = supervisor._repair_cycle(
+        run,
+        _config(goal="Add UI-visible rank card", max_repair_cycles=1),
+        "missing_ui_visibility",
+        1,
+    )
+
+    assert result is True
+    assert "restore" in backend.commands
+    assert not any(command.startswith("tests:") for command in backend.commands)
+    assert any(
+        event.phase == "repair_retry" and event.data.get("failure_class") == "wrong_file_edit"
+        for event in run.events
+    )
 
 
 def test_async_supervisor_start_is_observable_before_work_finishes(monkeypatch):

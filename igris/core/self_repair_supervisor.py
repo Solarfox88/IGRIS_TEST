@@ -451,6 +451,39 @@ def _has_destructive_diff(diff: str) -> bool:
     return any(any(token in line for token in critical) for line in removed_lines)
 
 
+def _is_valid_ui_test_diff(diff: str) -> bool:
+    """Return True when a UI test diff stays minimal and exact.
+
+    The UI rank task should use a read-only test against ``/api/rank/ui-card``.
+    We reject diffs that introduce request bodies, alternate verbs, or app
+    import patterns that have historically produced unstable bootstrap errors.
+    """
+
+    if "tests/test_rank_ui_card.py" not in diff:
+        return True
+
+    lowered = diff.lower()
+    required_get = (
+        'client.get("/api/rank/ui-card")' in lowered
+        or "client.get('/api/rank/ui-card')" in lowered
+    )
+    required_factory = "testclient(create_app())" in lowered or "create_app()" in lowered
+    forbidden_tokens = (
+        "client.post(",
+        "client.put(",
+        "client.patch(",
+        "client.delete(",
+        "client.request(",
+        "body(",
+        "json=",
+        "data=",
+        "from igris.web.server import app",
+    )
+    if not required_get or not required_factory:
+        return False
+    return not any(token in lowered for token in forbidden_tokens)
+
+
 class SelfRepairSupervisor:
     def __init__(self, project_root: str, backend: Optional[SupervisorBackend] = None):
         self.project_root = project_root
@@ -752,6 +785,20 @@ class SelfRepairSupervisor:
             restore = self.backend.restore_dangerous_diff()
             run.add("repair_restore", "success" if restore.success else "failure", _command_detail(restore))
             return False
+        if self._goal_requires_ui_visibility(config.goal) and not _is_valid_ui_test_diff(diff.output):
+            restore = self.backend.restore_dangerous_diff()
+            run.add(
+                "repair_restore",
+                "success" if restore.success else "failure",
+                "Invalid UI test diff rejected before repair validation",
+            )
+            run.add(
+                "repair_retry",
+                "running",
+                "Invalid UI test diff was rejected; retrying with remaining budget.",
+                failure_class="wrong_file_edit",
+            )
+            return True
         if not diff.output.strip():
             restore = self.backend.restore_dangerous_diff()
             run.add("repair_restore", "success" if restore.success else "failure", _command_detail(restore))
