@@ -58,6 +58,10 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(title="IGRIS_GPT", version="0.1.0")
 
+    @app.get('/api/rank/summary-card')
+    async def get_rank_summary_card():
+        return {'app': 'IGRIS_GPT', 'rank': 'A+', 'status': 'ok', 'capability': 'multi-file-supervised'}
+
     @app.get('/api/system/version-summary')
     async def get_version_summary():
         return {'app': 'IGRIS_GPT', 'rank': 'A-generalization', 'status': 'ok'}
