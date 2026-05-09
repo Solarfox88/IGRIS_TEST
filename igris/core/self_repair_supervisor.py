@@ -734,7 +734,14 @@ class SelfRepairSupervisor:
             timeout=config.reasoning_timeout_seconds,
         )
         run.add("repair_reasoning", str(result.get("status", "")), result.get("final_summary", ""))
-        if result.get("status") != "finished":
+        diff_stat = self.backend.git_diff_stat()
+        diff = self.backend.git_diff()
+        run.add("repair_diff_stat", "success" if diff_stat.success else "failure", _command_detail(diff_stat))
+        if not diff_stat.success or _has_destructive_diff(diff.output):
+            restore = self.backend.restore_dangerous_diff()
+            run.add("repair_restore", "success" if restore.success else "failure", _command_detail(restore))
+            return False
+        if not diff.output.strip():
             restore = self.backend.restore_dangerous_diff()
             run.add("repair_restore", "success" if restore.success else "failure", _command_detail(restore))
             return False
@@ -750,6 +757,14 @@ class SelfRepairSupervisor:
             restore = self.backend.restore_dangerous_diff()
             run.add("repair_restore", "success" if restore.success else "failure", _command_detail(restore))
             return False
+        if str(result.get("status", "")) != "finished":
+            run.add(
+                "repair_completion",
+                "degraded",
+                "Repair reasoning did not finish cleanly but the validated diff was accepted.",
+                stop_reason=result.get("stop_reason", ""),
+                files_modified=result.get("files_modified", []),
+            )
         return True
 
     def _complete_rank(

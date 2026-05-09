@@ -504,6 +504,7 @@ def test_supervisor_passes_after_one_repair_cycle():
 
 def test_supervisor_blocks_and_restores_when_repair_reasoning_blocks():
     backend = FakeBackend()
+    backend.diff = CommandResult(True, "")
     backend.reasoning_results = [
         {
             "status": "stopped",
@@ -515,7 +516,7 @@ def test_supervisor_blocks_and_restores_when_repair_reasoning_blocks():
         {
             "status": "blocked",
             "stop_reason": "ask_user",
-            "files_modified": ["tests/test_reasoning_loop.py"],
+            "files_modified": [],
             "final_summary": "needs human",
             "goal": "repair",
         },
@@ -631,8 +632,8 @@ def test_supervisor_requires_ui_visibility_for_ui_goals():
             "goal": "Add UI-visible rank card",
         },
         {
-            "status": "finished",
-            "stop_reason": "finish",
+            "status": "blocked",
+            "stop_reason": "blocked",
             "files_modified": ["igris/web/static/js/app.js"],
             "final_summary": "ui repair",
             "goal": "repair",
@@ -670,6 +671,11 @@ def test_supervisor_requires_ui_visibility_for_ui_goals():
         and context.get("must_not_ask_user") is True
         and context.get("must_add_ui_visibility") is True
         for context in backend.reasoning_contexts
+    )
+    assert any(
+        event.phase == "repair_completion"
+        and event.status == "degraded"
+        for event in run.events
     )
     assert any(
         event.phase == "rank_reasoning"
