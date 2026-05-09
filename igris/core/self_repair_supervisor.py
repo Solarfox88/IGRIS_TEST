@@ -522,6 +522,42 @@ def _is_valid_ui_test_diff(diff: str) -> bool:
     return not any(token in lowered for token in forbidden_tokens)
 
 
+def _diff_changed_paths(diff: str) -> List[str]:
+    paths: List[str] = []
+    for line in diff.splitlines():
+        if not line.startswith("diff --git "):
+            continue
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        path = parts[3]
+        if path.startswith("b/"):
+            path = path[2:]
+        paths.append(path)
+    return paths
+
+
+def _is_product_only_ui_task_diff(diff: str) -> bool:
+    """Return True when a repair diff only changes UI rank product files."""
+
+    paths = _diff_changed_paths(diff)
+    if not paths:
+        return False
+
+    product_prefixes = (
+        "igris/web/templates/",
+        "igris/web/static/js/",
+        "igris/web/static/css/",
+    )
+    product_paths = {
+        "igris/web/server.py",
+        "tests/test_rank_ui_card.py",
+        "tests/test_dashboard_tabs.py",
+        "tests/test_guided_actions.py",
+    }
+    return all(path in product_paths or path.startswith(product_prefixes) for path in paths)
+
+
 def _smoke_output_is_valid(endpoint: str, output: str) -> bool:
     text = output.strip()
     if not text:
@@ -869,6 +905,20 @@ class SelfRepairSupervisor:
                 "running",
                 "Invalid FastAPI bootstrap diff was rejected; retrying with remaining budget.",
                 failure_class="invalid_bootstrap",
+            )
+            return True
+        if self._goal_requires_ui_visibility(config.goal) and _is_product_only_ui_task_diff(diff.output):
+            restore = self.backend.restore_dangerous_diff()
+            run.add(
+                "repair_restore",
+                "success" if restore.success else "failure",
+                "Product-only UI task diff rejected before repair validation",
+            )
+            run.add(
+                "repair_retry",
+                "running",
+                "Product-only UI task diff was rejected; retrying with remaining budget.",
+                failure_class="wrong_file_edit",
             )
             return True
         if self._goal_requires_ui_visibility(config.goal) and not _is_valid_ui_test_diff(diff.output):
