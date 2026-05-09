@@ -136,6 +136,38 @@ def _config(**overrides):
     return RankSupervisorConfig.from_dict(data)
 
 
+def test_config_defaults_to_real_github_when_github_flags_enabled():
+    config = RankSupervisorConfig.from_dict({
+        "goal": "rank",
+        "allow_github_pr": True,
+        "allow_merge_if_green": True,
+    })
+
+    assert config.dry_run is False
+
+
+def test_config_preserves_explicit_dry_run_with_github_flags_enabled():
+    config = RankSupervisorConfig.from_dict({
+        "goal": "rank",
+        "allow_github_pr": True,
+        "allow_merge_if_green": True,
+        "dry_run": True,
+    })
+
+    assert config.dry_run is True
+
+
+def test_config_infers_targeted_test_from_goal():
+    config = RankSupervisorConfig.from_dict({
+        "goal": (
+            "Add endpoint and dedicated tests in "
+            "tests/test_system_version_summary.py. Run pytest."
+        ),
+    })
+
+    assert config.targeted_tests == ["tests/test_system_version_summary.py"]
+
+
 def test_failure_classifier_detects_max_steps_as_repairable_infrastructure_failure():
     failure = classify_failure({"status": "stopped", "stop_reason": "max_steps", "files_modified": []})
     assert failure == "max_steps"

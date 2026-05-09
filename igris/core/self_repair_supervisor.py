@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -61,6 +62,25 @@ def _command_detail(result: "CommandResult") -> str:
     return "\n".join(part for part in parts if part)
 
 
+def _infer_targeted_tests(goal: str, explicit_targets: List[str]) -> List[str]:
+    targets = list(explicit_targets)
+    seen = set(targets)
+    for match in re.findall(r"tests/test_[A-Za-z0-9_]+\.py", goal):
+        if match not in seen:
+            targets.append(match)
+            seen.add(match)
+    return targets
+
+
+def _infer_dry_run(data: Dict[str, Any]) -> bool:
+    if "dry_run" in data:
+        return bool(data.get("dry_run"))
+    return not (
+        bool(data.get("allow_github_pr", False))
+        or bool(data.get("allow_merge_if_green", False))
+    )
+
+
 @dataclass
 class CommandResult:
     success: bool = False
@@ -104,8 +124,11 @@ class RankSupervisorConfig:
             allow_merge_if_green=bool(data.get("allow_merge_if_green", False)),
             service_restart_command=str(data.get("service_restart_command", "")),
             required_smoke_endpoints=list(data.get("required_smoke_endpoints", [])),
-            targeted_tests=list(data.get("targeted_tests", [])),
-            dry_run=bool(data.get("dry_run", True)),
+            targeted_tests=_infer_targeted_tests(
+                str(data.get("goal", "")),
+                list(data.get("targeted_tests", [])),
+            ),
+            dry_run=_infer_dry_run(data),
             defer_service_restart=bool(data.get("defer_service_restart", False)),
             test_timeout_seconds=max(30, int(data.get("test_timeout_seconds", 240))),
             reasoning_timeout_seconds=max(30, int(data.get("reasoning_timeout_seconds", 300))),
