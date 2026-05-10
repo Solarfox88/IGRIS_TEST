@@ -2015,6 +2015,72 @@ def test_supervisor_missing_tests_accepts_untracked_scaffold(monkeypatch, tmp_pa
     assert any(command.startswith("tests:") for command in backend.commands)
 
 
+def test_supervisor_preserves_valid_missing_tests_scaffold_when_repair_pytest_fails(monkeypatch, tmp_path):
+    backend = FakeBackend()
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/igris/web/server.py b/igris/web/server.py
+@@ -1,2 +1,6 @@
++@app.get('/api/rank/s-dashboard')
+""",
+    )
+    backend.diff_stat = CommandResult(True, " igris/web/server.py | 4 ++++")
+    backend.reasoning_results = [
+        {
+            "status": "blocked",
+            "stop_reason": "blocked",
+            "files_modified": [],
+            "final_summary": "No suitable LLM provider available; deterministic fallback",
+            "goal": "repair missing tests",
+        }
+    ]
+    backend.full_tests = [CommandResult(False, "FAILED tests/test_rank_s_dashboard.py::test_rank_s_dashboard_contract", "", 1)]
+
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=backend)
+
+    def _fake_scaffold(config):
+        backend.diff = CommandResult(
+            True,
+            """diff --git a/tests/test_rank_s_dashboard.py b/tests/test_rank_s_dashboard.py
+@@ -0,0 +1,8 @@
++from fastapi.testclient import TestClient
++from igris.web.server import create_app
++def test_rank_s_dashboard_contract():
++    client = TestClient(create_app())
++    response = client.get('/api/rank/s-dashboard')
++    assert response.status_code == 200
+""",
+        )
+        backend.diff_stat = CommandResult(True, " tests/test_rank_s_dashboard.py | 8 ++++++++")
+        return CommandResult(True, "scaffolded")
+
+    monkeypatch.setattr(supervisor, "_scaffold_missing_tests_target", _fake_scaffold)
+    run = SupervisorRun(run_id="run-missing-tests-preserve-scaffold", rank_id="S")
+
+    result = supervisor._repair_cycle(
+        run,
+        _config(
+            goal="Add /api/rank/s-dashboard endpoint and tests/test_rank_s_dashboard.py coverage",
+            targeted_tests=["tests/test_rank_s_dashboard.py"],
+            max_repair_cycles=1,
+        ),
+        "missing_tests",
+        1,
+    )
+
+    assert result is True
+    assert backend.commands.count("restore") == 1
+    assert any(
+        event.phase == "repair_completion" and event.status == "degraded"
+        for event in run.events
+    )
+    assert not any(
+        event.phase == "repair_retry"
+        and "Repair validation failed; retrying" in event.detail
+        for event in run.events
+    )
+
+
 def test_supervisor_retries_destructive_repair_diff_for_retryable_failure():
     backend = FakeBackend()
     backend.diff = CommandResult(

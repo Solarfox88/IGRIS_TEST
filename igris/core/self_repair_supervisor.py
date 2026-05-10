@@ -1409,6 +1409,13 @@ class SelfRepairSupervisor:
         tests = self.backend.run_tests(timeout=config.test_timeout_seconds)
         run.add("repair_tests", "success" if tests.success else "failure", _command_detail(tests))
         if not tests.success:
+            if failure == "missing_tests" and _is_valid_missing_tests_repair_diff(diff.output, config.goal):
+                run.add(
+                    "repair_completion",
+                    "degraded",
+                    "Preserved valid missing-tests scaffold despite failing full pytest; continuing rank attempts.",
+                )
+                return True
             restore = self.backend.restore_dangerous_diff()
             run.add("repair_restore", "success" if restore.success else "failure", _command_detail(restore))
             if failure in RETRYABLE_REPAIR_FAILURES:
