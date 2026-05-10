@@ -619,6 +619,17 @@ def _has_ui_surface_change(diff: str) -> bool:
     return any(path.startswith(ui_prefixes) for path in paths)
 
 
+def _touches_rank_ui_contract_files(diff: str) -> bool:
+    paths = _diff_changed_paths(diff)
+    if not paths:
+        return False
+    protected = {
+        "igris/web/server.py",
+        "tests/test_rank_ui_card.py",
+    }
+    return any(path in protected for path in paths)
+
+
 def _smoke_output_is_valid(endpoint: str, output: str) -> bool:
     text = output.strip()
     if not text:
@@ -768,6 +779,38 @@ class SelfRepairSupervisor:
                     "UI visibility inferred from validated diff paths",
                     inferred_from_diff=True,
                 )
+            ui_contract_locked = (
+                ui_visibility_required
+                and self._rank_ui_card_contract_satisfied()
+                and self._rank_ui_visibility_signal_present()
+            )
+            if (
+                ui_contract_locked
+                and _touches_rank_ui_contract_files(diff.output)
+                and not _has_ui_surface_change(diff.output)
+            ):
+                restore = self.backend.restore_dangerous_diff()
+                run.add(
+                    "rank_restore",
+                    "success" if restore.success else "failure",
+                    "Protected UI contract files were modified despite already satisfied objective.",
+                )
+                if not restore.success:
+                    return self._blocked(
+                        run,
+                        "infrastructure_bug",
+                        "Could not restore unsupported edits to satisfied UI contract files",
+                    )
+                return self._complete_noop(
+                    run,
+                    completion_mode="already_satisfied",
+                    runtime_refresh_required=runtime_refresh_required,
+                    detail=(
+                        "Restored unsupported edits to satisfied UI contract files; "
+                        "completed as verified no-op."
+                    ),
+                    post_merge_smoke=False,
+                )
             targeted = CommandResult(True, "Targeted tests skipped")
             full = CommandResult(True, "Full pytest skipped")
             final_smoke = CommandResult(True, "Final smoke skipped")
@@ -815,24 +858,13 @@ class SelfRepairSupervisor:
                 )
             )
             if already_satisfied_noop:
-                run.add(
-                    "completion",
-                    "degraded",
-                    "Rank objective already satisfied; completed as verified no-op.",
-                    mode="already_satisfied",
+                return self._complete_noop(
+                    run,
+                    completion_mode="already_satisfied",
+                    runtime_refresh_required=runtime_refresh_required,
+                    detail="Rank objective already satisfied; completed as verified no-op.",
+                    post_merge_smoke=final_smoke.success,
                 )
-                run.status = "completed"
-                run.outcome = "Completed"
-                run.report = {
-                    "autonomous": True,
-                    "manual_remaining": "",
-                    "completion_mode": "already_satisfied",
-                    "degraded_completion": True,
-                    "post_merge_smoke": final_smoke.success,
-                    "runtime_refresh_required": runtime_refresh_required,
-                    "no_op_completion": True,
-                }
-                return run
             rank_passed = self._rank_passed(reasoning, diff_stat, targeted, full, final_smoke)
             if not failure:
                 if rank_passed:
@@ -1265,6 +1297,29 @@ class SelfRepairSupervisor:
             "degraded_completion": completion_mode != "direct" or runtime_refresh_required,
             "post_merge_smoke": False if post_merge_smoke is None else post_merge_smoke.success,
             "runtime_refresh_required": runtime_refresh_required,
+        }
+        return run
+
+    def _complete_noop(
+        self,
+        run: SupervisorRun,
+        *,
+        completion_mode: str,
+        runtime_refresh_required: bool,
+        detail: str,
+        post_merge_smoke: bool,
+    ) -> SupervisorRun:
+        run.add("completion", "degraded", detail, mode=completion_mode)
+        run.status = "completed"
+        run.outcome = "Completed"
+        run.report = {
+            "autonomous": True,
+            "manual_remaining": "",
+            "completion_mode": completion_mode,
+            "degraded_completion": True,
+            "post_merge_smoke": post_merge_smoke,
+            "runtime_refresh_required": runtime_refresh_required,
+            "no_op_completion": True,
         }
         return run
 

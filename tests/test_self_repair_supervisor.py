@@ -1018,6 +1018,81 @@ def test_supervisor_does_not_noop_complete_when_ui_contract_is_not_satisfied(mon
     assert run.failure_class == "reasoning_loop_blocked"
 
 
+def test_supervisor_restores_protected_ui_contract_test_edits_and_completes_noop(monkeypatch):
+    backend = FakeBackend()
+    backend.reasoning_results = [
+        {
+            "status": "blocked",
+            "stop_reason": "reasoning_timeout",
+            "files_modified": [],
+            "final_summary": "timed out while editing tests",
+            "goal": "Add UI-visible rank card",
+        }
+    ]
+    backend.diff_stat = CommandResult(True, " tests/test_rank_ui_card.py | 10 ++++++++++")
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/tests/test_rank_ui_card.py b/tests/test_rank_ui_card.py
+@@ -1,8 +1,10 @@
+ def test_rank_ui_card_endpoint_available():
++    assert response.json() == {"app":"IGRIS_GPT","rank":"A++","status":"ok","capability":"ui-visible-supervised"}
+""",
+    )
+    backend.full_tests = [CommandResult(True, "baseline ok")]
+    monkeypatch.setattr(SelfRepairSupervisor, "_rank_ui_card_contract_satisfied", lambda self: True)
+    monkeypatch.setattr(SelfRepairSupervisor, "_rank_ui_visibility_signal_present", lambda self: True)
+
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+        _config(goal="Add UI-visible rank card", max_rank_attempts=1, max_repair_cycles=1)
+    )
+
+    assert run.status == "completed"
+    assert run.report["completion_mode"] == "already_satisfied"
+    assert run.report["no_op_completion"] is True
+    assert "restore" in backend.commands
+    assert "issue" not in backend.commands
+
+
+def test_supervisor_does_not_restore_protected_contract_edits_when_ui_surface_changes(monkeypatch):
+    backend = FakeBackend()
+    backend.reasoning_results = [
+        {
+            "status": "blocked",
+            "stop_reason": "reasoning_timeout",
+            "files_modified": [],
+            "final_summary": "timed out with ui edits",
+            "goal": "Add UI-visible rank card",
+        }
+    ]
+    backend.diff_stat = CommandResult(
+        True,
+        " igris/web/templates/index.html | 1 +\n tests/test_rank_ui_card.py | 1 +",
+    )
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/igris/web/templates/index.html b/igris/web/templates/index.html
+@@ -20,6 +20,7 @@
++<div id="rank-ui-card-visibility" hidden></div>
+diff --git a/tests/test_rank_ui_card.py b/tests/test_rank_ui_card.py
+@@ -1,8 +1,9 @@
++assert response.status_code == 200
+""",
+    )
+    backend.full_tests = [
+        CommandResult(True, "baseline ok"),
+        CommandResult(True, "rank full ok"),
+    ]
+    monkeypatch.setattr(SelfRepairSupervisor, "_rank_ui_card_contract_satisfied", lambda self: True)
+    monkeypatch.setattr(SelfRepairSupervisor, "_rank_ui_visibility_signal_present", lambda self: True)
+
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+        _config(goal="Add UI-visible rank card", max_rank_attempts=1, max_repair_cycles=0)
+    )
+
+    assert run.status == "completed"
+    assert "restore" not in backend.commands
+
+
 def test_supervisor_infers_ui_visibility_from_diff_when_reasoning_metadata_is_empty():
     backend = FakeBackend()
     backend.reasoning_results = [
