@@ -7,6 +7,7 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 PID_FILE="$REPO_DIR/logs/igris.pid"
 LOG_FILE="$REPO_DIR/logs/igris.log"
 PORT="${IGRIS_PORT:-7778}"
+LISTENER_PID=$(lsof -tiTCP:"$PORT" -sTCP:LISTEN -n -P 2>/dev/null | head -n1 || true)
 
 echo "=== IGRIS_GPT Status ==="
 
@@ -14,12 +15,25 @@ echo "=== IGRIS_GPT Status ==="
 if [ -f "$PID_FILE" ]; then
   PID=$(cat "$PID_FILE")
   if kill -0 "$PID" 2>/dev/null; then
-    echo "PID:    $PID (running)"
+    if [ -n "$LISTENER_PID" ] && [ "$PID" = "$LISTENER_PID" ]; then
+      echo "PID:    $PID (running)"
+    elif [ -n "$LISTENER_PID" ]; then
+      echo "PID:    $PID (running, listener PID is $LISTENER_PID)"
+    else
+      echo "PID:    $PID (running, no listener detected on port $PORT)"
+    fi
   else
     echo "PID:    $PID (NOT running — stale PID file)"
+    if [ -n "$LISTENER_PID" ]; then
+      echo "Listener PID: $LISTENER_PID (active on port $PORT)"
+    fi
   fi
 else
-  echo "PID:    not found (server not started via scripts)"
+  if [ -n "$LISTENER_PID" ]; then
+    echo "PID:    not found in pid file (listener PID $LISTENER_PID active)"
+  else
+    echo "PID:    not found (server not started via scripts)"
+  fi
 fi
 
 echo "Port:   $PORT"

@@ -21,9 +21,13 @@ mkdir -p "$REPO_DIR/.igris/memory"
 if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE")
   if kill -0 "$OLD_PID" 2>/dev/null; then
-    echo "IGRIS_GPT is already running (PID $OLD_PID)."
-    echo "Use: bash scripts/stop_igris.sh  to stop it first."
-    exit 1
+    if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -a -p "$OLD_PID" >/dev/null 2>&1; then
+      echo "IGRIS_GPT is already running (PID $OLD_PID)."
+      echo "Use: bash scripts/stop_igris.sh  to stop it first."
+      exit 1
+    fi
+    echo "PID file points to non-listener process ($OLD_PID). Removing stale PID file..."
+    rm -f "$PID_FILE"
   else
     echo "Stale PID file found. Removing..."
     rm -f "$PID_FILE"
@@ -64,6 +68,12 @@ SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
 
 sleep 2
+
+LISTENER_PID=$(lsof -tiTCP:"$PORT" -sTCP:LISTEN -n -P 2>/dev/null | head -n1 || true)
+if [ -n "$LISTENER_PID" ]; then
+  SERVER_PID="$LISTENER_PID"
+  echo "$SERVER_PID" > "$PID_FILE"
+fi
 
 if kill -0 "$SERVER_PID" 2>/dev/null; then
   echo ""
