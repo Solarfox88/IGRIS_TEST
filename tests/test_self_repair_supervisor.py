@@ -787,6 +787,34 @@ def test_supervisor_passes_requested_rank_test_file_to_reasoning_context():
     assert "Create tests/test_rank_status.py directly" in backend.last_reasoning_context["anti_loop_instruction"]
 
 
+def test_supervisor_does_not_set_must_create_when_targeted_test_file_exists(tmp_path):
+    test_file = tmp_path / "tests" / "test_rank_ui_card.py"
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    test_file.write_text("def test_placeholder():\n    assert True\n", encoding="utf-8")
+
+    backend = FakeBackend()
+    run = SelfRepairSupervisor(str(tmp_path), backend=backend).run(
+        _config(targeted_tests=["tests/test_rank_ui_card.py"])
+    )
+
+    assert run.status == "completed"
+    assert "must_create_test_file" not in backend.last_reasoning_context
+    assert backend.last_reasoning_context["targeted_test_file_exists"] == "tests/test_rank_ui_card.py"
+    assert "Edit this file in place" in backend.last_reasoning_context["targeted_test_policy"]
+
+
+def test_supervisor_sets_must_create_when_targeted_test_file_is_missing(tmp_path):
+    backend = FakeBackend()
+    run = SelfRepairSupervisor(str(tmp_path), backend=backend).run(
+        _config(targeted_tests=["tests/test_rank_ui_card.py"])
+    )
+
+    assert run.status == "completed"
+    assert backend.last_reasoning_context["must_create_test_file"] == "tests/test_rank_ui_card.py"
+    assert "Create tests/test_rank_ui_card.py directly" in backend.last_reasoning_context["anti_loop_instruction"]
+    assert "targeted_test_file_exists" not in backend.last_reasoning_context
+
+
 def test_supervisor_requires_ui_visibility_for_ui_goals():
     backend = FakeBackend()
     backend.reasoning_results = [

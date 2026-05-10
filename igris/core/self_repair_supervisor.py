@@ -888,11 +888,19 @@ class SelfRepairSupervisor:
             )
         for target in config.targeted_tests:
             if target.startswith("tests/test_") and target.endswith(".py"):
-                context["must_create_test_file"] = target
-                context["anti_loop_instruction"] = (
-                    f"Do not repeat test discovery after tests/ is known. "
-                    f"Create {target} directly."
-                )
+                target_path = Path(self.project_root) / target
+                if target_path.exists():
+                    context["targeted_test_file_exists"] = target
+                    context["targeted_test_policy"] = (
+                        f"{target} already exists. Edit this file in place when needed. "
+                        "Do not rediscover tests/ and do not recreate the file."
+                    )
+                else:
+                    context["must_create_test_file"] = target
+                    context["anti_loop_instruction"] = (
+                        f"Do not repeat test discovery after tests/ is known. "
+                        f"Create {target} directly."
+                    )
                 break
         return context
 
