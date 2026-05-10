@@ -2135,6 +2135,51 @@ def test_supervisor_re_scaffolds_targeted_test_after_pytest_failure_restore(tmp_
     )
 
 
+def test_supervisor_re_scaffolds_targeted_test_for_no_diff_pytest_failure(tmp_path):
+    backend = FakeBackend()
+    backend.diff = CommandResult(True, "")
+    backend.diff_stat = CommandResult(True, "")
+    backend.reasoning_results = [
+        {
+            "status": "blocked",
+            "stop_reason": "reasoning_timeout",
+            "files_modified": [],
+            "final_summary": "repair timed out with no diff",
+            "goal": "repair pytest failure",
+        }
+    ]
+    backend.restore_result = CommandResult(True, "Removing tests/test_rank_s_dashboard.py")
+
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=backend)
+    run = SupervisorRun(run_id="run-pytest-no-diff-re-scaffold", rank_id="S")
+
+    result = supervisor._repair_cycle(
+        run,
+        _config(
+            goal="Add /api/rank/s-dashboard endpoint and tests/test_rank_s_dashboard.py coverage",
+            targeted_tests=["tests/test_rank_s_dashboard.py"],
+            max_repair_cycles=1,
+        ),
+        "pytest_failure",
+        1,
+    )
+
+    assert result is True
+    assert backend.commands.count("restore") == 1
+    assert (tmp_path / "tests/test_rank_s_dashboard.py").exists()
+    assert any(event.phase == "repair_scaffold" and event.status == "success" for event in run.events)
+    assert any(
+        event.phase == "repair_completion"
+        and "No-diff pytest repair restored and re-scaffolded targeted tests" in event.detail
+        for event in run.events
+    )
+    assert not any(
+        event.phase == "repair_retry"
+        and "Repair reasoning produced no validated diff" in event.detail
+        for event in run.events
+    )
+
+
 def test_supervisor_retries_destructive_repair_diff_for_retryable_failure():
     backend = FakeBackend()
     backend.diff = CommandResult(

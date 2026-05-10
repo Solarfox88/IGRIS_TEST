@@ -1426,6 +1426,13 @@ class SelfRepairSupervisor:
         if not diff.output.strip():
             restore = self.backend.restore_dangerous_diff()
             run.add("repair_restore", "success" if restore.success else "failure", _command_detail(restore))
+            if failure == "pytest_failure" and self._re_scaffold_targeted_test_if_missing(run, config):
+                run.add(
+                    "repair_completion",
+                    "degraded",
+                    "No-diff pytest repair restored and re-scaffolded targeted tests; continuing rank attempts.",
+                )
+                return True
             if failure in RETRYABLE_REPAIR_FAILURES:
                 run.add(
                     "repair_retry",
