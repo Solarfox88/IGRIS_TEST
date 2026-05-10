@@ -835,6 +835,36 @@ def test_supervisor_requires_ui_visibility_for_ui_goals():
     )
 
 
+def test_rank_ui_card_contract_detector_true(tmp_path):
+    server = tmp_path / "igris" / "web" / "server.py"
+    server.parent.mkdir(parents=True, exist_ok=True)
+    server.write_text(
+        """def create_app():
+    @app.get('/api/rank/ui-card')
+    async def get_rank_ui_card():
+        return {'app': 'IGRIS_GPT', 'rank': 'A++', 'status': 'ok', 'capability': 'ui-visible-supervised'}
+""",
+        encoding="utf-8",
+    )
+
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=FakeBackend())
+
+    assert supervisor._rank_ui_card_contract_satisfied() is True
+
+
+def test_supervisor_context_enforces_ui_only_when_contract_already_satisfied(monkeypatch):
+    backend = FakeBackend()
+    monkeypatch.setattr(SelfRepairSupervisor, "_rank_ui_card_contract_satisfied", lambda self: True)
+
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+        _config(goal="Add UI-visible rank card", max_rank_attempts=1, max_repair_cycles=0)
+    )
+
+    assert run.status in {"completed", "blocked"}
+    assert backend.last_reasoning_context["ui_contract_already_satisfied"] is True
+    assert "Do not modify this route" in backend.last_reasoning_context["ui_contract_policy"]
+
+
 def test_supervisor_infers_ui_visibility_from_diff_when_reasoning_metadata_is_empty():
     backend = FakeBackend()
     backend.reasoning_results = [

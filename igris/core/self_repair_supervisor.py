@@ -844,12 +844,20 @@ class SelfRepairSupervisor:
             ),
         }
         if self._goal_requires_ui_visibility(config.goal):
+            ui_contract_satisfied = self._rank_ui_card_contract_satisfied()
             context["must_add_ui_visibility"] = True
             context["ui_visibility_policy"] = (
                 "If the goal requires UI/dashboard visibility, modify a UI surface "
                 "such as igris/web/templates/index.html, igris/web/static/js/app.js, "
                 "or igris/web/static/css/style.css. Backend-only changes are not enough."
             )
+            context["ui_contract_already_satisfied"] = ui_contract_satisfied
+            if ui_contract_satisfied:
+                context["ui_contract_policy"] = (
+                    "The /api/rank/ui-card contract is already satisfied in "
+                    "igris/web/server.py. Do not modify this route. Focus only on "
+                    "minimal UI/dashboard visibility edits and related UI checks."
+                )
             context["ui_test_policy"] = (
                 "UI tests must stay minimal and exact. Do not add placeholder routes, "
                 "commented example paths, or unrelated assertions. Test the exact "
@@ -866,6 +874,38 @@ class SelfRepairSupervisor:
                 )
                 break
         return context
+
+    def _rank_ui_card_contract_satisfied(self) -> bool:
+        server_path = Path(self.project_root) / "igris/web/server.py"
+        if not server_path.exists():
+            return False
+        try:
+            content = server_path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+
+        route_present = (
+            "@app.get('/api/rank/ui-card')" in content
+            or '@app.get("/api/rank/ui-card")' in content
+        )
+        if not route_present:
+            return False
+
+        def _has_pair(key: str, value: str) -> bool:
+            return (
+                f"'{key}': '{value}'" in content
+                or f'"{key}": "{value}"' in content
+            )
+
+        return all(
+            _has_pair(key, value)
+            for key, value in (
+                ("app", "IGRIS_GPT"),
+                ("rank", "A++"),
+                ("status", "ok"),
+                ("capability", "ui-visible-supervised"),
+            )
+        )
 
     @staticmethod
     def _goal_requires_ui_visibility(goal: str) -> bool:
