@@ -19,3 +19,13 @@ def test_rank_ui_card_route_is_defined_once_in_create_app():
 
     assert source.count(route) == 1
     assert source.index(route) < source.index("def run_app")
+
+def test_rank_ui_card_response():
+    client = TestClient(create_app())
+    response = client.get('/api/rank/ui-card')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'app' in data
+    assert 'rank' in data
+    assert 'status' in data
+    assert 'capability' in data
