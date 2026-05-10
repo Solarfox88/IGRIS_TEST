@@ -565,6 +565,18 @@ def _is_product_only_ui_task_diff(diff: str) -> bool:
     return all(path in product_paths or path.startswith(product_prefixes) for path in paths)
 
 
+def _has_ui_surface_change(diff: str) -> bool:
+    paths = _diff_changed_paths(diff)
+    if not paths:
+        return False
+    ui_prefixes = (
+        "igris/web/templates/",
+        "igris/web/static/js/",
+        "igris/web/static/css/",
+    )
+    return any(path.startswith(ui_prefixes) for path in paths)
+
+
 def _smoke_output_is_valid(endpoint: str, output: str) -> bool:
     text = output.strip()
     if not text:
@@ -943,19 +955,20 @@ class SelfRepairSupervisor:
             )
             return True
         if self._goal_requires_ui_visibility(config.goal) and _is_product_only_ui_task_diff(diff.output):
-            restore = self.backend.restore_dangerous_diff()
-            run.add(
-                "repair_restore",
-                "success" if restore.success else "failure",
-                "Product-only UI task diff rejected before repair validation",
-            )
-            run.add(
-                "repair_retry",
-                "running",
-                "Product-only UI task diff was rejected; retrying with remaining budget.",
-                failure_class="wrong_file_edit",
-            )
-            return True
+            if not (failure == "missing_ui_visibility" and _has_ui_surface_change(diff.output)):
+                restore = self.backend.restore_dangerous_diff()
+                run.add(
+                    "repair_restore",
+                    "success" if restore.success else "failure",
+                    "Product-only UI task diff rejected before repair validation",
+                )
+                run.add(
+                    "repair_retry",
+                    "running",
+                    "Product-only UI task diff was rejected; retrying with remaining budget.",
+                    failure_class="wrong_file_edit",
+                )
+                return True
         if self._goal_requires_ui_visibility(config.goal) and not _is_valid_ui_test_diff(diff.output):
             restore = self.backend.restore_dangerous_diff()
             run.add(

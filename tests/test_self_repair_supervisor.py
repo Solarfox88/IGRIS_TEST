@@ -989,6 +989,100 @@ index 1111111..2222222 100644
     )
 
 
+def test_supervisor_accepts_safe_ui_surface_repair_for_missing_ui_visibility():
+    backend = FakeBackend()
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/igris/web/static/js/app.js b/igris/web/static/js/app.js
+index 1111111..2222222 100644
+--- a/igris/web/static/js/app.js
++++ b/igris/web/static/js/app.js
+@@ -10,6 +10,7 @@
+ function renderDashboard() {
+   const root = document.getElementById("dashboard-root");
++  root.setAttribute("data-rank-ui-card", "visible");
+ }
+""",
+    )
+    backend.reasoning_results = [
+        {
+            "status": "finished",
+            "stop_reason": "finish",
+            "files_modified": ["igris/web/static/js/app.js"],
+            "final_summary": "ui visibility repair",
+            "goal": "repair",
+        }
+    ]
+    backend.full_tests = [CommandResult(True, "repair validation passed")]
+
+    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    run = SupervisorRun(run_id="run-ui-accept", rank_id="A")
+
+    result = supervisor._repair_cycle(
+        run,
+        _config(goal="Add UI-visible rank card", max_repair_cycles=1),
+        "missing_ui_visibility",
+        1,
+    )
+
+    assert result is True
+    assert any(command.startswith("tests:") for command in backend.commands)
+    assert not any(event.phase == "repair_retry" for event in run.events)
+
+
+def test_supervisor_rejects_missing_ui_visibility_repair_when_only_tests_change():
+    backend = FakeBackend()
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/tests/test_rank_ui_card.py b/tests/test_rank_ui_card.py
+index 1111111..2222222 100644
+--- a/tests/test_rank_ui_card.py
++++ b/tests/test_rank_ui_card.py
+@@ -1,7 +1,12 @@
+ from fastapi.testclient import TestClient
+
+ from igris.web.server import create_app
+
+ def test_rank_ui_card_endpoint_available():
+     client = TestClient(create_app())
+     response = client.get("/api/rank/ui-card")
++    assert response.json() == {
++        "app": "IGRIS_GPT",
++        "rank": "A++",
++        "status": "ok",
++        "capability": "ui-visible-supervised",
++    }
+""",
+    )
+    backend.reasoning_results = [
+        {
+            "status": "finished",
+            "stop_reason": "finish",
+            "files_modified": ["tests/test_rank_ui_card.py"],
+            "final_summary": "tests only",
+            "goal": "repair",
+        }
+    ]
+
+    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    run = SupervisorRun(run_id="run-ui-reject", rank_id="A")
+
+    result = supervisor._repair_cycle(
+        run,
+        _config(goal="Add UI-visible rank card", max_repair_cycles=1),
+        "missing_ui_visibility",
+        1,
+    )
+
+    assert result is True
+    assert "restore" in backend.commands
+    assert not any(command.startswith("tests:") for command in backend.commands)
+    assert any(
+        event.phase == "repair_retry" and event.data.get("failure_class") == "wrong_file_edit"
+        for event in run.events
+    )
+
+
 def test_supervisor_retries_destructive_repair_diff_for_retryable_failure():
     backend = FakeBackend()
     backend.diff = CommandResult(
