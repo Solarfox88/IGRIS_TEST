@@ -1220,6 +1220,21 @@ class SelfRepairSupervisor:
         )
         return True
 
+    def _preserve_targeted_tests_after_restore_retry(
+        self,
+        run: SupervisorRun,
+        config: RankSupervisorConfig,
+        failure: str,
+    ) -> None:
+        if failure not in {"missing_tests", "pytest_failure"}:
+            return
+        if self._re_scaffold_targeted_test_if_missing(run, config):
+            run.add(
+                "repair_completion",
+                "degraded",
+                "Re-scaffolded targeted tests after restore-based retry path.",
+            )
+
     def _scaffold_missing_tests_target(self, config: RankSupervisorConfig) -> CommandResult:
         target = self._targeted_test_file(config)
         if not target:
@@ -1323,6 +1338,7 @@ class SelfRepairSupervisor:
             restore = self.backend.restore_dangerous_diff()
             run.add("repair_restore", "success" if restore.success else "failure", _command_detail(restore))
             if failure in {"reasoning_loop_blocked", "missing_ui_visibility", "missing_tests", "max_steps"}:
+                self._preserve_targeted_tests_after_restore_retry(run, config, failure)
                 run.add(
                     "repair_retry",
                     "running",
@@ -1344,6 +1360,7 @@ class SelfRepairSupervisor:
                 "Invalid FastAPI bootstrap diff was rejected; retrying with remaining budget.",
                 failure_class="invalid_bootstrap",
             )
+            self._preserve_targeted_tests_after_restore_retry(run, config, failure)
             return True
         if failure == "missing_tests" and not _is_valid_missing_tests_repair_diff(diff.output, config.goal):
             restore = self.backend.restore_dangerous_diff()
@@ -1408,6 +1425,7 @@ class SelfRepairSupervisor:
                     "Product-only UI task diff was rejected; retrying with remaining budget.",
                     failure_class="wrong_file_edit",
                 )
+                self._preserve_targeted_tests_after_restore_retry(run, config, failure)
                 return True
         if self._goal_requires_ui_visibility(config.goal) and not _is_valid_ui_test_diff(diff.output):
             restore = self.backend.restore_dangerous_diff()
@@ -1422,6 +1440,7 @@ class SelfRepairSupervisor:
                 "Invalid UI test diff was rejected; retrying with remaining budget.",
                 failure_class="wrong_file_edit",
             )
+            self._preserve_targeted_tests_after_restore_retry(run, config, failure)
             return True
         if not diff.output.strip():
             restore = self.backend.restore_dangerous_diff()
@@ -1434,6 +1453,7 @@ class SelfRepairSupervisor:
                 )
                 return True
             if failure in RETRYABLE_REPAIR_FAILURES:
+                self._preserve_targeted_tests_after_restore_retry(run, config, failure)
                 run.add(
                     "repair_retry",
                     "running",
@@ -1468,6 +1488,7 @@ class SelfRepairSupervisor:
                 )
                 return True
             if failure in RETRYABLE_REPAIR_FAILURES:
+                self._preserve_targeted_tests_after_restore_retry(run, config, failure)
                 run.add(
                     "repair_retry",
                     "running",

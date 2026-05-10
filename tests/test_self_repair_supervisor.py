@@ -2276,6 +2276,55 @@ def test_supervisor_rejects_invalid_fastapi_bootstrap_diff_before_validation_pyt
     )
 
 
+def test_supervisor_re_scaffolds_targeted_tests_after_invalid_bootstrap_restore(tmp_path):
+    backend = FakeBackend()
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/igris/web/server.py b/igris/web/server.py
+@@ -56,12 +56,13 @@ def create_app() -> FastAPI:
+-    @app.get('/api/status')
++    return JSONResponse(content={'app': 'IGRIS_GPT', 'rank': 'S', 'status': 'ok'})
+""",
+    )
+    backend.diff_stat = CommandResult(True, " igris/web/server.py | 1 +")
+    backend.reasoning_results = [
+        {
+            "status": "blocked",
+            "stop_reason": "reasoning_timeout",
+            "files_modified": ["igris/web/server.py"],
+            "final_summary": "repair timed out",
+            "goal": "repair pytest failure",
+        }
+    ]
+
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=backend)
+    run = SupervisorRun(run_id="run-invalid-bootstrap-re-scaffold", rank_id="S")
+
+    result = supervisor._repair_cycle(
+        run,
+        _config(
+            goal="Add /api/rank/s-dashboard endpoint and tests/test_rank_s_dashboard.py coverage",
+            targeted_tests=["tests/test_rank_s_dashboard.py"],
+            max_repair_cycles=1,
+        ),
+        "pytest_failure",
+        1,
+    )
+
+    assert result is True
+    assert backend.commands.count("restore") == 1
+    assert (tmp_path / "tests/test_rank_s_dashboard.py").exists()
+    assert any(
+        event.phase == "repair_retry" and event.data.get("failure_class") == "invalid_bootstrap"
+        for event in run.events
+    )
+    assert any(
+        event.phase == "repair_completion"
+        and "restore-based retry path" in event.detail
+        for event in run.events
+    )
+
+
 def test_supervisor_rejects_ui_test_diff_that_asserts_non_contract_keys():
     backend = FakeBackend()
     backend.diff = CommandResult(
