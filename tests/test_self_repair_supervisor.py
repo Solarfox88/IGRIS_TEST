@@ -953,6 +953,71 @@ def test_supervisor_context_enforces_ui_only_when_contract_already_satisfied(mon
     assert "Do not modify this route" in backend.last_reasoning_context["ui_contract_policy"]
 
 
+def test_supervisor_completes_ui_mission_as_verified_noop_when_already_satisfied(monkeypatch):
+    backend = FakeBackend()
+    backend.reasoning_results = [
+        {
+            "status": "blocked",
+            "stop_reason": "reasoning_timeout",
+            "files_modified": [],
+            "final_summary": "timed out with no edits",
+            "goal": "Add UI-visible rank card",
+        }
+    ]
+    backend.diff_stat = CommandResult(True, "")
+    backend.diff = CommandResult(True, "")
+    backend.full_tests = [
+        CommandResult(True, "baseline ok"),
+        CommandResult(True, "rank full ok"),
+    ]
+    monkeypatch.setattr(SelfRepairSupervisor, "_rank_ui_card_contract_satisfied", lambda self: True)
+    monkeypatch.setattr(SelfRepairSupervisor, "_rank_ui_visibility_signal_present", lambda self: True)
+
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+        _config(goal="Add UI-visible rank card", max_rank_attempts=1, max_repair_cycles=1)
+    )
+
+    assert run.status == "completed"
+    assert run.report["completion_mode"] == "already_satisfied"
+    assert run.report["degraded_completion"] is True
+    assert run.report["manual_remaining"] == ""
+    assert run.report["no_op_completion"] is True
+    assert "issue" not in backend.commands
+    assert not any(event.phase == "failure" for event in run.events)
+    assert any(
+        event.phase == "completion" and event.data.get("mode") == "already_satisfied"
+        for event in run.events
+    )
+
+
+def test_supervisor_does_not_noop_complete_when_ui_contract_is_not_satisfied(monkeypatch):
+    backend = FakeBackend()
+    backend.reasoning_results = [
+        {
+            "status": "blocked",
+            "stop_reason": "reasoning_timeout",
+            "files_modified": [],
+            "final_summary": "timed out with no edits",
+            "goal": "Add UI-visible rank card",
+        }
+    ]
+    backend.diff_stat = CommandResult(True, "")
+    backend.diff = CommandResult(True, "")
+    backend.full_tests = [
+        CommandResult(True, "baseline ok"),
+        CommandResult(True, "rank full ok"),
+    ]
+    monkeypatch.setattr(SelfRepairSupervisor, "_rank_ui_card_contract_satisfied", lambda self: False)
+    monkeypatch.setattr(SelfRepairSupervisor, "_rank_ui_visibility_signal_present", lambda self: False)
+
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+        _config(goal="Add UI-visible rank card", max_rank_attempts=1, max_repair_cycles=0)
+    )
+
+    assert run.status == "blocked"
+    assert run.failure_class == "reasoning_loop_blocked"
+
+
 def test_supervisor_infers_ui_visibility_from_diff_when_reasoning_metadata_is_empty():
     backend = FakeBackend()
     backend.reasoning_results = [

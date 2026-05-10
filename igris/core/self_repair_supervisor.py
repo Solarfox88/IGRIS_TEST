@@ -804,6 +804,35 @@ class SelfRepairSupervisor:
                 run.add("targeted_tests", "success" if targeted.success else "failure", _command_detail(targeted))
                 run.add("full_pytest", "success" if full.success else "failure", _command_detail(full))
                 run.add("smoke", "success" if final_smoke.success else "failure", _command_detail(final_smoke))
+            already_satisfied_noop = (
+                not failure
+                and self._ui_noop_completion_eligible(
+                    config,
+                    diff_stat,
+                    targeted,
+                    full,
+                    final_smoke,
+                )
+            )
+            if already_satisfied_noop:
+                run.add(
+                    "completion",
+                    "degraded",
+                    "Rank objective already satisfied; completed as verified no-op.",
+                    mode="already_satisfied",
+                )
+                run.status = "completed"
+                run.outcome = "Completed"
+                run.report = {
+                    "autonomous": True,
+                    "manual_remaining": "",
+                    "completion_mode": "already_satisfied",
+                    "degraded_completion": True,
+                    "post_merge_smoke": final_smoke.success,
+                    "runtime_refresh_required": runtime_refresh_required,
+                    "no_op_completion": True,
+                }
+                return run
             rank_passed = self._rank_passed(reasoning, diff_stat, targeted, full, final_smoke)
             if not failure:
                 if rank_passed:
@@ -865,6 +894,22 @@ class SelfRepairSupervisor:
             and full.success
             and smoke.success
         )
+
+    def _ui_noop_completion_eligible(
+        self,
+        config: RankSupervisorConfig,
+        diff_stat: CommandResult,
+        targeted: CommandResult,
+        full: CommandResult,
+        smoke: CommandResult,
+    ) -> bool:
+        if not self._goal_requires_ui_visibility(config.goal):
+            return False
+        if diff_stat.output.strip():
+            return False
+        if not (targeted.success and full.success and smoke.success):
+            return False
+        return self._rank_ui_card_contract_satisfied() and self._rank_ui_visibility_signal_present()
 
     def _rank_initial_context(self, config: RankSupervisorConfig) -> Dict[str, Any]:
         context: Dict[str, Any] = {
@@ -956,6 +1001,16 @@ class SelfRepairSupervisor:
                 ("capability", "ui-visible-supervised"),
             )
         )
+
+    def _rank_ui_visibility_signal_present(self) -> bool:
+        index_path = Path(self.project_root) / "igris/web/templates/index.html"
+        if not index_path.exists():
+            return False
+        try:
+            content = index_path.read_text(encoding="utf-8").lower()
+        except OSError:
+            return False
+        return "rank-ui-card" in content and "ui-visible-supervised" in content
 
     @staticmethod
     def _goal_requires_ui_visibility(goal: str) -> bool:
