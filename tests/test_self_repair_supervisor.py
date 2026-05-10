@@ -871,9 +871,9 @@ def test_supervisor_records_rank_reasoning_running_and_timeout_budget():
     assert "reasoning_timeout:55" in backend.commands
 
 
-def test_supervisor_passes_requested_rank_test_file_to_reasoning_context():
+def test_supervisor_passes_requested_rank_test_file_to_reasoning_context(tmp_path):
     backend = FakeBackend()
-    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+    run = SelfRepairSupervisor(str(tmp_path), backend=backend).run(
         _config(targeted_tests=["tests/test_rank_status.py"])
     )
 
@@ -1708,7 +1708,7 @@ index 1111111..2222222 100644
     )
 
 
-def test_supervisor_accepts_missing_tests_repair_for_mission_endpoint():
+def test_supervisor_accepts_missing_tests_repair_for_mission_endpoint(tmp_path):
     backend = FakeBackend()
     backend.diff = CommandResult(
         True,
@@ -1738,7 +1738,7 @@ index 1111111..2222222 100644
     ]
     backend.full_tests = [CommandResult(True, "repair validation passed")]
 
-    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=backend)
     run = SupervisorRun(run_id="run-missing-tests-accept", rank_id="S")
 
     result = supervisor._repair_cycle(
@@ -1756,7 +1756,7 @@ index 1111111..2222222 100644
     assert not any(event.phase == "repair_retry" for event in run.events)
 
 
-def test_supervisor_rejects_missing_tests_repair_with_unrelated_endpoints():
+def test_supervisor_rejects_missing_tests_repair_with_unrelated_endpoints(tmp_path):
     backend = FakeBackend()
     backend.diff = CommandResult(
         True,
@@ -1789,7 +1789,7 @@ index 1111111..2222222 100644
         }
     ]
 
-    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=backend)
     run = SupervisorRun(run_id="run-missing-tests-reject", rank_id="S")
 
     result = supervisor._repair_cycle(
@@ -1806,6 +1806,84 @@ index 1111111..2222222 100644
     assert "restore" in backend.commands
     assert not any(command.startswith("tests:") for command in backend.commands)
     assert any(
+        event.phase == "repair_retry" and event.data.get("failure_class") == "wrong_file_edit"
+        for event in run.events
+    )
+
+
+def test_supervisor_scaffolds_missing_tests_target_file(tmp_path):
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=FakeBackend())
+    config = _config(
+        goal="Add /api/rank/s-dashboard endpoint and tests/test_rank_s_dashboard.py coverage",
+        targeted_tests=["tests/test_rank_s_dashboard.py"],
+    )
+
+    result = supervisor._scaffold_missing_tests_target(config)
+
+    assert result.success
+    scaffold_path = tmp_path / "tests/test_rank_s_dashboard.py"
+    assert scaffold_path.exists()
+    content = scaffold_path.read_text(encoding="utf-8")
+    assert 'response = client.get("/api/rank/s-dashboard")' in content
+    assert "TestClient(create_app())" in content
+
+
+def test_supervisor_missing_tests_repair_uses_scaffold_fallback(monkeypatch, tmp_path):
+    backend = FakeBackend()
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/igris/web/server.py b/igris/web/server.py
+@@ -1,2 +1,6 @@
++@app.get('/api/rank/s-dashboard')
+""",
+    )
+    backend.diff_stat = CommandResult(True, " igris/web/server.py | 4 ++++")
+    backend.reasoning_results = [
+        {
+            "status": "finished",
+            "stop_reason": "finish",
+            "files_modified": ["igris/web/server.py"],
+            "final_summary": "wrong repair scope",
+            "goal": "repair missing tests",
+        }
+    ]
+    backend.full_tests = [CommandResult(True, "repair validation passed")]
+
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=backend)
+
+    def _fake_scaffold(config):
+        backend.diff = CommandResult(
+            True,
+            """diff --git a/tests/test_rank_s_dashboard.py b/tests/test_rank_s_dashboard.py
+@@ -0,0 +1,8 @@
++from fastapi.testclient import TestClient
++from igris.web.server import create_app
++def test_rank_s_dashboard_contract():
++    client = TestClient(create_app())
++    response = client.get('/api/rank/s-dashboard')
++    assert response.status_code == 200
+""",
+        )
+        backend.diff_stat = CommandResult(True, " tests/test_rank_s_dashboard.py | 8 ++++++++")
+        return CommandResult(True, "scaffolded")
+
+    monkeypatch.setattr(supervisor, "_scaffold_missing_tests_target", _fake_scaffold)
+    run = SupervisorRun(run_id="run-missing-tests-scaffold", rank_id="S")
+
+    result = supervisor._repair_cycle(
+        run,
+        _config(
+            goal="Add /api/rank/s-dashboard endpoint and tests/test_rank_s_dashboard.py coverage",
+            max_repair_cycles=1,
+        ),
+        "missing_tests",
+        1,
+    )
+
+    assert result is True
+    assert any(event.phase == "repair_scaffold" and event.status == "success" for event in run.events)
+    assert any(command.startswith("tests:") for command in backend.commands)
+    assert not any(
         event.phase == "repair_retry" and event.data.get("failure_class") == "wrong_file_edit"
         for event in run.events
     )

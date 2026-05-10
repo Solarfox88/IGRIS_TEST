@@ -1139,6 +1139,42 @@ class SelfRepairSupervisor:
                 return True
         return False
 
+    def _scaffold_missing_tests_target(self, config: RankSupervisorConfig) -> CommandResult:
+        target = ""
+        for candidate in config.targeted_tests:
+            if candidate.startswith("tests/test_") and candidate.endswith(".py"):
+                target = candidate
+                break
+        if not target:
+            return CommandResult(False, "", "No targeted test path configured for missing-tests scaffold", 2)
+
+        endpoint = _required_endpoint_from_goal(config.goal)
+        if not endpoint:
+            return CommandResult(False, "", "No API endpoint found in goal for missing-tests scaffold", 2)
+
+        test_slug = endpoint.strip("/").replace("/", "_").replace("-", "_").lower()
+        test_slug = re.sub(r"[^a-z0-9_]+", "_", test_slug).strip("_")
+        if not test_slug:
+            test_slug = "mission_endpoint"
+
+        content = (
+            "from fastapi.testclient import TestClient\n\n"
+            "from igris.web.server import create_app\n\n\n"
+            f"def test_{test_slug}():\n"
+            "    client = TestClient(create_app())\n"
+            f"    response = client.get(\"{endpoint}\")\n"
+            "    assert response.status_code == 200\n"
+        )
+
+        target_path = Path(self.project_root) / target
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            return CommandResult(False, "", str(exc), 1)
+
+        return CommandResult(True, f"Scaffolded {target} for {endpoint}", "", 0)
+
     def _repair_cycle(self, run: SupervisorRun, config: RankSupervisorConfig, failure: str, cycle: int) -> bool:
         title = f"{config.rank_id}: supervised repair for {failure}"
         body = f"Supervisor detected {failure} during run {run.run_id}."
@@ -1239,13 +1275,33 @@ class SelfRepairSupervisor:
                 "success" if restore.success else "failure",
                 "Missing-tests repair diff rejected before validation",
             )
-            run.add(
-                "repair_retry",
-                "running",
-                "Missing-tests repair diff was rejected; retrying with remaining budget.",
-                failure_class="wrong_file_edit",
-            )
-            return True
+            if not restore.success:
+                return False
+            scaffold = self._scaffold_missing_tests_target(config)
+            run.add("repair_scaffold", "success" if scaffold.success else "failure", _command_detail(scaffold))
+            if scaffold.success:
+                diff_stat = self.backend.git_diff_stat()
+                diff = self.backend.git_diff()
+                run.add("repair_scaffold_diff", "success" if diff_stat.success else "failure", _command_detail(diff_stat))
+            if (
+                not scaffold.success
+                or not diff_stat.success
+                or not _is_valid_missing_tests_repair_diff(diff.output, config.goal)
+            ):
+                if scaffold.success:
+                    restore = self.backend.restore_dangerous_diff()
+                    run.add(
+                        "repair_restore",
+                        "success" if restore.success else "failure",
+                        "Scaffolded missing-tests diff was invalid; restored.",
+                    )
+                run.add(
+                    "repair_retry",
+                    "running",
+                    "Missing-tests repair diff was rejected; retrying with remaining budget.",
+                    failure_class="wrong_file_edit",
+                )
+                return True
         if self._goal_requires_ui_visibility(config.goal) and _is_product_only_ui_task_diff(diff.output):
             allow_safe_ui_repair = (
                 _has_ui_surface_change(diff.output)
