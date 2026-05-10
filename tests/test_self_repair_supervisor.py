@@ -504,6 +504,7 @@ def test_supervisor_records_post_merge_smoke_and_degraded_completion():
     assert run.report["degraded_completion"] is True
     assert run.report["completion_mode"] == "verified_diff"
     assert run.report["post_merge_smoke"] is True
+    assert run.report["manual_remaining"] == ""
     assert backend.commands.index("pull") < len(backend.commands) - 1
 
 
@@ -532,6 +533,27 @@ def test_supervisor_defers_post_merge_smoke_when_runtime_refresh_is_required():
     assert run.report["post_merge_smoke"] is False
     assert run.report["degraded_completion"] is True
     assert sum(1 for command in backend.commands if command.startswith("smoke:")) == 2
+
+
+def test_supervisor_reports_manual_remaining_when_merge_is_disabled():
+    backend = FakeBackend()
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+        _config(dry_run=False, allow_github_pr=True, allow_merge_if_green=False, max_repair_cycles=0)
+    )
+
+    assert run.status == "completed"
+    assert run.report["manual_remaining"] == "merge disabled by config"
+    assert "merge" not in backend.commands
+
+
+def test_supervisor_reports_manual_remaining_for_dry_run_delivery():
+    backend = FakeBackend()
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(
+        _config(dry_run=True, max_repair_cycles=0)
+    )
+
+    assert run.status == "completed"
+    assert run.report["manual_remaining"] == "delivery skipped by dry_run"
 
 
 def test_supervisor_runs_baseline_diagnostics_before_blocking():

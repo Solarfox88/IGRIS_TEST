@@ -1141,7 +1141,9 @@ class SelfRepairSupervisor:
     ) -> SupervisorRun:
         restart_command = config.service_restart_command if not config.defer_service_restart else ""
         post_merge_smoke: Optional[CommandResult] = None
+        manual_remaining = ""
         if config.dry_run:
+            manual_remaining = "delivery skipped by dry_run"
             run.add("github", "dry_run", "Commit/PR/merge skipped by dry_run")
         else:
             commit = self.backend.commit(f"feat: complete supervised {config.rank_id}", ["igris", "tests"])
@@ -1190,11 +1192,17 @@ class SelfRepairSupervisor:
                                 "runtime_refresh_required": runtime_refresh_required,
                             }
                             return run
+                elif config.allow_merge_if_green and not ci.success:
+                    manual_remaining = "merge skipped because CI is not green"
+                else:
+                    manual_remaining = "merge disabled by config"
+            else:
+                manual_remaining = "GitHub PR/merge workflow disabled by config"
         run.status = "completed"
         run.outcome = "Completed"
         run.report = {
             "autonomous": True,
-            "manual_remaining": "real GitHub merge is gated unless enabled",
+            "manual_remaining": manual_remaining,
             "completion_mode": completion_mode,
             "degraded_completion": completion_mode != "direct" or runtime_refresh_required,
             "post_merge_smoke": False if post_merge_smoke is None else post_merge_smoke.success,
