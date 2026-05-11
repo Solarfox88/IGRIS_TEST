@@ -2932,6 +2932,76 @@ diff --git a/igris/web/templates/index.html b/igris/web/templates/index.html
     assert "tests:['tests/test_rank_s_dashboard.py']" not in backend.commands
 
 
+def test_supervisor_rejects_out_of_scope_attempted_write_even_when_ast_blocked_before_modify():
+    backend = FakeBackend()
+    backend.reasoning_results = [
+        {
+            "status": "finished",
+            "stop_reason": "finish",
+            "files_modified": ["igris/web/server.py"],
+            "final_summary": "backend done",
+            "goal": "stage backend",
+        },
+        {
+            "status": "finished",
+            "stop_reason": "finish",
+            "files_modified": ["tests/test_rank_s_dashboard.py"],
+            "final_summary": "backend tests done",
+            "goal": "stage backend tests",
+        },
+        {
+            "status": "blocked",
+            "stop_reason": "blocked",
+            "files_modified": ["igris/web/templates/index.html"],
+            "steps": [
+                {
+                    "action_type": "replace_range",
+                    "parameters": {"path": "igris/web/server.py", "start": "1", "end": "2"},
+                    "error": "Python AST validation failed for 'igris/web/server.py': unexpected indent",
+                }
+            ],
+            "final_summary": (
+                "Loop blocked. Blocked detail: action=replace_range; "
+                "error=Python AST validation failed for 'igris/web/server.py': unexpected indent"
+            ),
+            "goal": "stage ui",
+        },
+    ]
+    backend.diff_stat = CommandResult(
+        True,
+        " igris/web/server.py | 4 ++++\n tests/test_rank_s_dashboard.py | 8 ++++++++\n igris/web/templates/index.html | 1 +",
+    )
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/igris/web/server.py b/igris/web/server.py
+@@ -1,2 +1,6 @@
++@app.get('/api/rank/s-dashboard')
+diff --git a/tests/test_rank_s_dashboard.py b/tests/test_rank_s_dashboard.py
+@@ -0,0 +1,8 @@
++def test_rank_s_dashboard():
+diff --git a/igris/web/templates/index.html b/igris/web/templates/index.html
+@@ -10,6 +10,7 @@
++<div id='rank-s-dashboard'>ready</div>
+""",
+    )
+
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(_staged_config(max_repair_cycles=0))
+
+    assert run.status == "blocked"
+    assert run.failure_class == "wrong_file_edit"
+    assert any(
+        event.phase == "mission_stage"
+        and event.data.get("stage_id") == "ui_dashboard_change"
+        and "out-of-scope files: igris/web/server.py" in event.detail
+        for event in run.events
+    )
+    assert any(
+        event.phase == "validation_short_circuit"
+        for event in run.events
+    )
+    assert "tests:['tests/test_rank_s_dashboard.py']" not in backend.commands
+
+
 def test_supervisor_grants_one_final_validation_attempt_after_last_successful_repair():
     backend = FakeBackend()
     backend.reasoning_results = [

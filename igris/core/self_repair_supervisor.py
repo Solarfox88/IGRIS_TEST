@@ -52,6 +52,15 @@ UNSAFE_STATUS_PREFIXES = (
     "?? .igris",
 )
 
+WRITE_ACTION_TYPES = frozenset({
+    "write_file",
+    "insert_after",
+    "insert_before",
+    "replace_range",
+    "append_file",
+    "apply_patch",
+})
+
 
 def _safe_text(value: Any) -> str:
     if value is None:
@@ -672,6 +681,56 @@ def _diff_changed_paths(diff: str) -> List[str]:
     return paths
 
 
+def _normalize_candidate_path(path: str) -> str:
+    normalized = str(path or "").strip().strip("'\"")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized.startswith("a/") or normalized.startswith("b/"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _extract_attempted_write_paths(reasoning_result: Dict[str, Any]) -> List[str]:
+    paths: Set[str] = set()
+    steps = reasoning_result.get("steps") or []
+    for raw_step in steps:
+        if not isinstance(raw_step, dict):
+            continue
+        action_type = str(raw_step.get("action_type", "")).strip()
+        if action_type not in WRITE_ACTION_TYPES:
+            continue
+        params = raw_step.get("parameters") or {}
+        if isinstance(params, dict):
+            for key in ("path", "file_path", "file", "target_path"):
+                candidate = params.get(key)
+                if not isinstance(candidate, str):
+                    continue
+                normalized = _normalize_candidate_path(candidate)
+                if normalized:
+                    paths.add(normalized)
+        for text_key in ("error", "result_summary"):
+            text = str(raw_step.get(text_key, "") or "")
+            for match in re.findall(r"['\"]([A-Za-z0-9_./-]+\.[A-Za-z0-9_]+)['\"]", text):
+                normalized = _normalize_candidate_path(match)
+                if normalized and not normalized.startswith(("http://", "https://")):
+                    paths.add(normalized)
+    for text in [
+        str(reasoning_result.get("final_summary", "") or ""),
+        str(reasoning_result.get("error", "") or ""),
+    ]:
+        for match in re.findall(r"['\"]([A-Za-z0-9_./-]+\.[A-Za-z0-9_]+)['\"]", text):
+            normalized = _normalize_candidate_path(match)
+            if normalized and not normalized.startswith(("http://", "https://")):
+                paths.add(normalized)
+    for error in reasoning_result.get("errors") or []:
+        text = str(error or "")
+        for match in re.findall(r"['\"]([A-Za-z0-9_./-]+\.[A-Za-z0-9_]+)['\"]", text):
+            normalized = _normalize_candidate_path(match)
+            if normalized and not normalized.startswith(("http://", "https://")):
+                paths.add(normalized)
+    return sorted(paths)
+
+
 def _is_product_only_ui_task_diff(diff: str) -> bool:
     """Return True when a repair diff only changes UI rank product files."""
 
@@ -1245,6 +1304,8 @@ class SelfRepairSupervisor:
             status = str(result.get("status", ""))
             stop_reason = str(result.get("stop_reason", ""))
             files_modified = list(result.get("files_modified") or [])
+            attempted_write_paths = _extract_attempted_write_paths(result)
+            observed_paths = list(dict.fromkeys(files_modified + attempted_write_paths))
             if files_modified:
                 for path in files_modified:
                     if path not in aggregated_files:
@@ -1261,10 +1322,11 @@ class SelfRepairSupervisor:
                 loop_id=loop_id,
                 stop_reason=stop_reason,
                 files_modified=files_modified,
+                attempted_write_paths=attempted_write_paths,
             )
             after_diff = self.backend.git_diff()
             after_paths = set(_diff_changed_paths(after_diff.output))
-            valid_paths, invalid_paths = self._validate_new_stage_paths(stage, before_paths, after_paths, files_modified)
+            valid_paths, invalid_paths = self._validate_new_stage_paths(stage, before_paths, after_paths, observed_paths)
             if not valid_paths:
                 self._set_stage_status(
                     run,
