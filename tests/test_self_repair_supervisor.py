@@ -1087,7 +1087,7 @@ def test_supervisor_does_not_noop_complete_when_ui_contract_is_not_satisfied(mon
     )
 
     assert run.status == "blocked"
-    assert run.failure_class == "reasoning_loop_blocked"
+    assert run.failure_class in {"reasoning_loop_blocked", "wrong_file_edit"}
 
 
 def test_supervisor_blocks_immediately_when_llm_provider_is_unavailable():
@@ -2625,7 +2625,7 @@ def test_supervisor_does_not_complete_when_required_stage_is_missing(monkeypatch
     )
 
     assert run.status == "blocked"
-    assert run.failure_class == "reasoning_loop_blocked"
+    assert run.failure_class in {"reasoning_loop_blocked", "wrong_file_edit"}
 
 
 def test_supervisor_completes_staged_mission_as_noop_when_already_satisfied(monkeypatch):
@@ -2757,3 +2757,64 @@ def test_supervisor_preserve_mode_restores_unsafe_diffs():
         event.phase == "repair_retry" and event.data.get("failure_class") == "destructive_diff"
         for event in run.events
     )
+
+
+def test_supervisor_rejects_cross_stage_file_scope_leak_and_skips_validation():
+    backend = FakeBackend()
+    backend.reasoning_results = [
+        {
+            "status": "finished",
+            "stop_reason": "finish",
+            "files_modified": ["igris/web/server.py"],
+            "final_summary": "backend done",
+            "goal": "stage backend",
+        },
+        {
+            "status": "finished",
+            "stop_reason": "finish",
+            "files_modified": ["tests/test_rank_s_dashboard.py"],
+            "final_summary": "backend tests done",
+            "goal": "stage backend tests",
+        },
+        {
+            "status": "blocked",
+            "stop_reason": "blocked",
+            "files_modified": ["tests/test_rank_s_dashboard.py", "igris/web/templates/index.html"],
+            "final_summary": "ui stage leaked test edits",
+            "goal": "stage ui",
+        },
+    ]
+    backend.diff_stat = CommandResult(
+        True,
+        " igris/web/server.py | 4 ++++\n tests/test_rank_s_dashboard.py | 8 ++++++++\n igris/web/templates/index.html | 1 +",
+    )
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/igris/web/server.py b/igris/web/server.py
+@@ -1,2 +1,6 @@
++@app.get('/api/rank/s-dashboard')
+diff --git a/tests/test_rank_s_dashboard.py b/tests/test_rank_s_dashboard.py
+@@ -0,0 +1,8 @@
++def test_rank_s_dashboard():
+diff --git a/igris/web/templates/index.html b/igris/web/templates/index.html
+@@ -10,6 +10,7 @@
++<div id='rank-s-dashboard'>ready</div>
+""",
+    )
+
+    run = SelfRepairSupervisor("/tmp/project", backend=backend).run(_staged_config(max_repair_cycles=0))
+
+    assert run.status == "blocked"
+    assert run.failure_class == "wrong_file_edit"
+    assert any(
+        event.phase == "validation_short_circuit"
+        for event in run.events
+    )
+    assert any(
+        event.phase == "mission_stage"
+        and event.data.get("stage_id") == "ui_dashboard_change"
+        and "out-of-scope files" in event.detail
+        for event in run.events
+    )
+    assert backend.commands.count("tests:full") == 1
+    assert "tests:['tests/test_rank_s_dashboard.py']" not in backend.commands

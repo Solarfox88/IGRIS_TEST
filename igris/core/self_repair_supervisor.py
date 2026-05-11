@@ -1098,14 +1098,25 @@ class SelfRepairSupervisor:
         stage: MissionStage,
         before_paths: Set[str],
         after_paths: Set[str],
+        touched_files: List[str],
     ) -> Tuple[bool, str]:
         if not stage.allowed_file_families:
             return True, ""
-        new_paths = sorted(after_paths - before_paths)
-        if not new_paths:
+        paths_to_check = set(after_paths - before_paths)
+        for touched in touched_files:
+            normalized = str(touched or "").strip()
+            if not normalized:
+                continue
+            if normalized.startswith("./"):
+                normalized = normalized[2:]
+            if normalized.startswith("b/"):
+                normalized = normalized[2:]
+            paths_to_check.add(normalized)
+        candidate_paths = sorted(path for path in paths_to_check if path)
+        if not candidate_paths:
             return True, ""
         invalid = [
-            path for path in new_paths
+            path for path in candidate_paths
             if not self._path_in_allowed_family(path, stage.allowed_file_families)
         ]
         if not invalid:
@@ -1240,7 +1251,7 @@ class SelfRepairSupervisor:
             )
             after_diff = self.backend.git_diff()
             after_paths = set(_diff_changed_paths(after_diff.output))
-            valid_paths, invalid_paths = self._validate_new_stage_paths(stage, before_paths, after_paths)
+            valid_paths, invalid_paths = self._validate_new_stage_paths(stage, before_paths, after_paths, files_modified)
             if not valid_paths:
                 self._set_stage_status(
                     run,
@@ -1512,9 +1523,34 @@ class SelfRepairSupervisor:
             targeted = CommandResult(True, "Targeted tests skipped")
             full = CommandResult(True, "Full pytest skipped")
             final_smoke = CommandResult(True, "Final smoke skipped")
-            failure = ""
+            failure = stage_failure or ""
 
-            if _has_destructive_diff(diff.output):
+            if failure:
+                run.add(
+                    "validation_short_circuit",
+                    "running",
+                    f"Skipping attempt validation because required stage failed: {failure}",
+                )
+                run.add("targeted_tests", "skipped", "Skipped because a required stage failed before validation.")
+                run.add("full_pytest", "skipped", "Skipped because a required stage failed before validation.")
+                run.add("smoke", "skipped", "Skipped because a required stage failed before validation.")
+                if "targeted_tests" in stage_statuses:
+                    self._set_stage_status(
+                        run,
+                        stage_statuses,
+                        "targeted_tests",
+                        "skipped",
+                        "Skipped because a required implementation stage failed.",
+                    )
+                if "full_pytest" in stage_statuses:
+                    self._set_stage_status(
+                        run,
+                        stage_statuses,
+                        "full_pytest",
+                        "skipped",
+                        "Skipped because a required implementation stage failed.",
+                    )
+            elif _has_destructive_diff(diff.output):
                 run.add("safety", "blocked", "Destructive diff detected")
                 self.backend.restore_dangerous_diff()
                 failure = "destructive_diff"
@@ -1625,12 +1661,10 @@ class SelfRepairSupervisor:
                     post_merge_smoke=final_smoke.success,
                     mission_plan=mission_plan,
                     stage_statuses=stage_statuses,
-                )
+            )
             rank_passed = self._rank_passed(reasoning, diff_stat, targeted, full, final_smoke)
             if not failure:
-                if stage_failure:
-                    failure = stage_failure
-                elif rank_passed:
+                if rank_passed:
                     if ui_visibility_required and not ui_visibility_changed:
                         failure = "missing_ui_visibility"
                 else:
