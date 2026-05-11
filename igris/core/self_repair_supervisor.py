@@ -38,6 +38,7 @@ RETRYABLE_REPAIR_FAILURES = {
     "reasoning_loop_blocked",
     "missing_ui_visibility",
     "missing_tests",
+    "wrong_file_edit",
     "max_steps",
     "syntax_error",
     "pytest_failure",
@@ -2175,7 +2176,7 @@ class SelfRepairSupervisor:
         if _has_destructive_diff(diff.output):
             if not _restore_or_preserve("Destructive repair diff rejected; restoring.", force_restore=True):
                 return False
-            if failure in {"reasoning_loop_blocked", "missing_ui_visibility", "missing_tests", "max_steps"}:
+            if failure in RETRYABLE_REPAIR_FAILURES:
                 self._preserve_targeted_tests_after_restore_retry(run, config, failure)
                 run.add(
                     "repair_retry",

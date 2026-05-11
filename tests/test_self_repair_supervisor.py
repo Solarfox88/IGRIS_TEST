@@ -2292,6 +2292,47 @@ def test_supervisor_retries_destructive_repair_diff_for_retryable_failure():
     )
 
 
+def test_supervisor_retries_destructive_repair_diff_for_wrong_file_edit():
+    backend = FakeBackend()
+    backend.diff = CommandResult(
+        True,
+        """diff --git a/igris/web/server.py b/igris/web/server.py
+@@ -1,6 +1,5 @@
+-def create_app() -> FastAPI:
+     @app.get('/api/rank/ui-card')
+     async def get_rank_ui_card():
+         return {'app': 'IGRIS_GPT', 'rank': 'A++', 'status': 'ok', 'capability': 'ui-visible-supervised'}
+""",
+    )
+    backend.reasoning_results = [
+        {
+            "status": "finished",
+            "stop_reason": "finish",
+            "files_modified": ["igris/web/server.py", "tests/test_rank_ui_card.py"],
+            "final_summary": "wrong file scope repair",
+            "goal": "repair",
+        }
+    ]
+    backend.full_tests = [CommandResult(True, "baseline ok")]
+
+    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    run = SupervisorRun(run_id="run-destructive-wrong-file-edit", rank_id="A")
+
+    result = supervisor._repair_cycle(
+        run,
+        _config(goal="Add UI-visible rank card", max_repair_cycles=1),
+        "wrong_file_edit",
+        1,
+    )
+
+    assert result is True
+    assert "restore" in backend.commands
+    assert any(
+        event.phase == "repair_retry" and event.data.get("failure_class") == "destructive_diff"
+        for event in run.events
+    )
+
+
 def test_supervisor_rejects_invalid_fastapi_bootstrap_diff_before_validation_pytest():
     backend = FakeBackend()
     backend.diff = CommandResult(
