@@ -2,6 +2,7 @@ import json
 import subprocess
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -46,6 +47,21 @@ class FakeBackend:
         self.last_reasoning_context = None
         self.reasoning_contexts = []
         self.reasoning_goals = []
+        self.api_helper_result = CommandResult(
+            True,
+            json.dumps({
+                "diagnosis": "timeout loop",
+                "likely_supervisor_gap": "missing retry strategy",
+                "suggested_repair_strategy": "apply bounded retry",
+                "suggested_tests": ["tests/test_self_repair_supervisor.py -q"],
+                "risk": "low",
+                "confidence": 0.78,
+                "requires_human_or_codex_audit": False,
+                "must_not_complete_product_manually": True,
+                "estimated_cost_usd": 0.01,
+            }),
+        )
+        self.api_helper_packets = []
 
     def git_status(self):
         self.commands.append("git_status")
@@ -136,6 +152,16 @@ class FakeBackend:
         self.commands.append(f"restore_paths:{normalized}")
         self.restore_paths_calls.append(normalized)
         return self.restore_paths_result
+
+    def call_api_helper(self, packet, model, max_tokens, timeout=45):
+        self.commands.append(f"api_helper:{model}:{max_tokens}:{timeout}")
+        self.api_helper_packets.append({
+            "packet": packet,
+            "model": model,
+            "max_tokens": max_tokens,
+            "timeout": timeout,
+        })
+        return self.api_helper_result
 
 
 def _config(**overrides):
@@ -3263,6 +3289,185 @@ def test_supervisor_does_not_cleanup_preflight_workspace_dirty_block():
     assert run.status == "blocked"
     assert run.failure_class == "workspace_dirty"
     assert "restore" not in backend.commands
+
+
+def test_api_escalation_disabled_by_default_and_not_called():
+    config = RankSupervisorConfig.from_dict({"goal": "rank task"})
+    assert config.allow_api_escalation is False
+
+    backend = FakeBackend()
+    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    run = SupervisorRun(run_id="run-no-api", rank_id="S")
+    run.audit_resolver = supervisor._resolve_event_audit
+    supervisor._repair_cycle(run, _config(max_repair_cycles=0), "reasoning_loop_blocked", 1)
+
+    assert not any(cmd.startswith("api_helper:") for cmd in backend.commands)
+    assert any(event.phase == "api_escalation" and event.status == "skipped" for event in run.events)
+
+
+def test_api_escalation_packet_contains_required_fields_and_is_sanitized():
+    backend = FakeBackend()
+    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    run = SupervisorRun(run_id="run-packet", rank_id="S")
+    run.audit_resolver = supervisor._resolve_event_audit
+    run.add("failure", "classified", "token=sk-test-123456", api_key="sk-live-super-secret", reason="loop")
+    config = RankSupervisorConfig.from_dict({
+        "goal": "Use token sk-prod-secret and fix ui",
+        "allow_api_escalation": True,
+        "max_api_escalations_per_run": 2,
+        "max_api_budget_usd": 1.0,
+    })
+
+    packet = supervisor._build_api_escalation_packet(
+        run,
+        config,
+        failure="reasoning_loop_blocked",
+        cycle=2,
+        stage_statuses={"ui_dashboard_change": {"status": "failure"}},
+    )
+
+    for key in ("run_id", "rank_id", "failure_class", "repair_cycle", "recent_events", "policy"):
+        assert key in packet
+    serialized = json.dumps(packet)
+    assert "sk-live-super-secret" not in serialized
+    assert "sk-prod-secret" not in serialized
+    assert packet["policy"]["must_not_complete_product_manually"] is True
+
+
+def test_api_escalation_respects_call_and_budget_limits():
+    backend = FakeBackend()
+    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    run = SupervisorRun(run_id="run-budget", rank_id="S")
+    run.audit_resolver = supervisor._resolve_event_audit
+    config = RankSupervisorConfig.from_dict({
+        "goal": "rank",
+        "allow_api_escalation": True,
+        "max_api_escalations_per_run": 2,
+        "max_api_budget_usd": 0.005,
+        "max_tokens_per_escalation": 300,
+    })
+
+    first = supervisor._maybe_api_escalate(run, config, failure="reasoning_loop_blocked", cycle=1)
+    second = supervisor._maybe_api_escalate(run, config, failure="reasoning_loop_blocked", cycle=2)
+
+    assert first is not None
+    assert second is None
+    assert len(backend.api_helper_packets) == 1
+    assert run.api_escalations_used == 1
+    assert run.api_budget_used_usd >= 0.01
+    assert any(
+        event.phase == "api_escalation" and event.status == "skipped" and event.data.get("budget_type") == "usd"
+        for event in run.events
+    )
+
+
+def test_api_helper_response_is_recorded_and_used_as_advice_only():
+    backend = FakeBackend()
+    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    run = SupervisorRun(run_id="run-advice", rank_id="S")
+    run.audit_resolver = supervisor._resolve_event_audit
+    config = _config(
+        allow_api_escalation=True,
+        max_api_escalations_per_run=2,
+        max_api_budget_usd=1.0,
+        max_tokens_per_escalation=256,
+    )
+
+    ok = supervisor._repair_cycle(run, config, "reasoning_loop_blocked", 1)
+
+    assert ok is True
+    assert any(event.phase == "api_escalation_response" and event.status == "success" for event in run.events)
+    assert any("api_helper:" in cmd for cmd in backend.commands)
+    assert any("API helper advice (advisory only" in goal for goal in backend.reasoning_goals)
+
+
+def test_api_helper_high_risk_triggers_stronger_validation_smoke():
+    backend = FakeBackend()
+    backend.api_helper_result = CommandResult(
+        True,
+        json.dumps({
+            "diagnosis": "risky patch",
+            "likely_supervisor_gap": "unsafe restore heuristic",
+            "suggested_repair_strategy": "force direct file rewrite",
+            "suggested_tests": [],
+            "risk": "high",
+            "confidence": 0.2,
+            "requires_human_or_codex_audit": True,
+            "must_not_complete_product_manually": True,
+            "estimated_cost_usd": 0.0,
+        }),
+    )
+    supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+    run = SupervisorRun(run_id="run-risky", rank_id="S")
+    run.audit_resolver = supervisor._resolve_event_audit
+    config = _config(
+        allow_api_escalation=True,
+        max_api_escalations_per_run=1,
+        max_api_budget_usd=1.0,
+    )
+
+    ok = supervisor._repair_cycle(run, config, "reasoning_loop_blocked", 1)
+
+    assert ok is True
+    assert any(event.phase == "repair_high_risk_validation" for event in run.events)
+    assert any(cmd.startswith("smoke:") for cmd in backend.commands)
+
+
+def test_audit_checkpoint_marks_reviewed_events_as_already_reviewed(tmp_path):
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=FakeBackend())
+    probe = SupervisorEvent(phase="repair_issue", status="success", detail="issue#1", data={"failure_class": "x"})
+    scope_hash = supervisor._event_scope_hash(probe)
+    supervisor.record_audit_checkpoint(scope_hash, audit_status="audit-reviewed", reviewed_by="qa")
+
+    run = SupervisorRun(run_id="run-audit-reviewed", rank_id="S")
+    run.audit_resolver = supervisor._resolve_event_audit
+    run.add("repair_issue", "success", "issue#1", failure_class="x")
+
+    assert run.events[-1].audit_status == "audit-reviewed"
+    assert run.events[-1].audit_reviewed_by == "qa"
+
+
+def test_audit_scope_change_resets_event_to_audit_new(tmp_path):
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=FakeBackend())
+    probe = SupervisorEvent(phase="repair_issue", status="success", detail="issue#1", data={"failure_class": "x"})
+    scope_hash = supervisor._event_scope_hash(probe)
+    supervisor.record_audit_checkpoint(scope_hash, audit_status="audit-fixed", reviewed_by="qa")
+
+    run = SupervisorRun(run_id="run-audit-new", rank_id="S")
+    run.audit_resolver = supervisor._resolve_event_audit
+    run.add("repair_issue", "success", "issue#2 changed detail", failure_class="x")
+
+    assert run.events[-1].audit_status == "audit-new"
+
+
+def test_audit_deferred_event_becomes_reviewable_after_due_date(tmp_path):
+    supervisor = SelfRepairSupervisor(str(tmp_path), backend=FakeBackend())
+    probe = SupervisorEvent(phase="repair_issue", status="success", detail="issue#defer", data={"failure_class": "x"})
+    scope_hash = supervisor._event_scope_hash(probe)
+    future_due = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    supervisor.record_audit_checkpoint(
+        scope_hash,
+        audit_status="audit-deferred",
+        reviewed_by="qa",
+        next_review_after=future_due,
+    )
+
+    run = SupervisorRun(run_id="run-audit-deferred", rank_id="S")
+    run.audit_resolver = supervisor._resolve_event_audit
+    run.add("repair_issue", "success", "issue#defer", failure_class="x")
+    assert run.events[-1].audit_status == "audit-deferred"
+
+    past_due = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    supervisor.record_audit_checkpoint(
+        scope_hash,
+        audit_status="audit-deferred",
+        reviewed_by="qa",
+        next_review_after=past_due,
+    )
+    run2 = SupervisorRun(run_id="run-audit-due", rank_id="S")
+    run2.audit_resolver = supervisor._resolve_event_audit
+    run2.add("repair_issue", "success", "issue#defer", failure_class="x")
+    assert run2.events[-1].audit_status == "audit-new"
 
 
 def test_ui_stage_wrong_file_edit_on_server_py_triggers_stage_local_restore_only():

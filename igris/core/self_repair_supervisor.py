@@ -10,11 +10,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Set, Tuple
 
@@ -60,6 +63,14 @@ WRITE_ACTION_TYPES = frozenset({
     "append_file",
     "apply_patch",
 })
+
+AUDIT_STATUSES = {
+    "audit-new",
+    "audit-reviewed",
+    "audit-fixed",
+    "audit-deferred",
+    "audit-false-positive",
+}
 
 
 def _safe_text(value: Any) -> str:
@@ -133,6 +144,11 @@ class RankSupervisorConfig:
     defer_service_restart: bool = False
     test_timeout_seconds: int = 240
     reasoning_timeout_seconds: int = 300
+    allow_api_escalation: bool = False
+    max_api_escalations_per_run: int = 0
+    max_api_budget_usd: float = 0.0
+    max_tokens_per_escalation: int = 600
+    api_helper_model: str = "gpt-5.4-mini"
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RankSupervisorConfig":
@@ -153,6 +169,11 @@ class RankSupervisorConfig:
             defer_service_restart=bool(data.get("defer_service_restart", False)),
             test_timeout_seconds=max(30, int(data.get("test_timeout_seconds", 240))),
             reasoning_timeout_seconds=max(30, int(data.get("reasoning_timeout_seconds", 300))),
+            allow_api_escalation=bool(data.get("allow_api_escalation", False)),
+            max_api_escalations_per_run=max(0, int(data.get("max_api_escalations_per_run", 0))),
+            max_api_budget_usd=max(0.0, float(data.get("max_api_budget_usd", 0.0))),
+            max_tokens_per_escalation=max(64, int(data.get("max_tokens_per_escalation", 600))),
+            api_helper_model=str(data.get("api_helper_model", "gpt-5.4-mini")),
         )
 
 
@@ -184,6 +205,14 @@ class SupervisorEvent:
     detail: str = ""
     data: Dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
+    audit_status: str = "audit-new"
+    audit_reviewed_by: str = ""
+    audit_reviewed_at: str = ""
+    audit_review_id: str = ""
+    audit_scope_hash: str = ""
+    audit_next_review_after: str = ""
+    audit_resolution_pr: str = ""
+    audit_notes: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -192,6 +221,14 @@ class SupervisorEvent:
             "detail": _safe_redact(self.detail),
             "data": {k: _safe_redact(v) for k, v in self.data.items()},
             "timestamp": self.timestamp,
+            "audit_status": self.audit_status,
+            "audit_reviewed_by": self.audit_reviewed_by,
+            "audit_reviewed_at": self.audit_reviewed_at,
+            "audit_review_id": self.audit_review_id,
+            "audit_scope_hash": self.audit_scope_hash,
+            "audit_next_review_after": self.audit_next_review_after,
+            "audit_resolution_pr": self.audit_resolution_pr,
+            "audit_notes": _safe_redact(self.audit_notes),
         }
 
 
@@ -204,11 +241,17 @@ class SupervisorRun:
     failure_class: str = ""
     branch: str = ""
     repair_cycles_used: int = 0
+    api_escalations_used: int = 0
+    api_budget_used_usd: float = 0.0
     events: List[SupervisorEvent] = field(default_factory=list)
     report: Dict[str, Any] = field(default_factory=dict)
+    audit_resolver: Any = None
 
     def add(self, phase: str, status: str, detail: str = "", **data: Any) -> None:
-        self.events.append(SupervisorEvent(phase=phase, status=status, detail=detail, data=data))
+        event = SupervisorEvent(phase=phase, status=status, detail=detail, data=data)
+        if callable(self.audit_resolver):
+            self.audit_resolver(event)
+        self.events.append(event)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -219,6 +262,8 @@ class SupervisorRun:
             "failure_class": self.failure_class,
             "branch": self.branch,
             "repair_cycles_used": self.repair_cycles_used,
+            "api_escalations_used": self.api_escalations_used,
+            "api_budget_used_usd": round(self.api_budget_used_usd, 6),
             "events": [e.to_dict() for e in self.events],
             "report": self.report,
         }
@@ -243,6 +288,7 @@ class SupervisorBackend(Protocol):
     def create_issue(self, title: str, body: str) -> CommandResult: ...
     def restore_dangerous_diff(self) -> CommandResult: ...
     def restore_paths(self, paths: List[str]) -> CommandResult: ...
+    def call_api_helper(self, packet: Dict[str, Any], model: str, max_tokens: int, timeout: int = 45) -> CommandResult: ...
 
 
 class LocalSupervisorBackend:
@@ -479,6 +525,22 @@ class LocalSupervisorBackend:
         if not clean.success:
             return clean
         return CommandResult(True, (restore.output or "") + (clean.output or ""), "", 0)
+
+    def call_api_helper(
+        self,
+        packet: Dict[str, Any],
+        model: str,
+        max_tokens: int,
+        timeout: int = 45,
+    ) -> CommandResult:
+        helper_command = str(os.getenv("IGRIS_API_HELPER_COMMAND", "")).strip()
+        if not helper_command:
+            return CommandResult(False, "", "API helper command is not configured.", 2)
+        cmd = shlex.split(helper_command)
+        if not cmd:
+            return CommandResult(False, "", "API helper command is empty after parsing.", 2)
+        payload = json.dumps({"model": model, "max_tokens": max_tokens, "packet": packet})
+        return self._run(cmd, timeout=timeout, input_text=payload)
 
 
 def classify_failure(
@@ -850,6 +912,245 @@ class SelfRepairSupervisor:
     def __init__(self, project_root: str, backend: Optional[SupervisorBackend] = None):
         self.project_root = project_root
         self.backend = backend or LocalSupervisorBackend(project_root)
+        self._audit_path = Path(project_root) / ".igris" / "supervisor_audit.json"
+        self._audit_index = self._load_audit_index()
+
+    def _load_audit_index(self) -> Dict[str, Dict[str, Any]]:
+        try:
+            if not self._audit_path.exists():
+                return {}
+            payload = json.loads(self._audit_path.read_text(encoding="utf-8"))
+            records = payload.get("records", {}) if isinstance(payload, dict) else {}
+            if not isinstance(records, dict):
+                return {}
+            return {str(k): dict(v) for k, v in records.items() if isinstance(k, str) and isinstance(v, dict)}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _persist_audit_index(self) -> None:
+        try:
+            self._audit_path.parent.mkdir(parents=True, exist_ok=True)
+            self._audit_path.write_text(json.dumps({"records": self._audit_index}, indent=2, sort_keys=True), encoding="utf-8")
+        except OSError:
+            return
+
+    @staticmethod
+    def _sanitize_escalation_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            out: Dict[str, Any] = {}
+            for key, raw in value.items():
+                lowered = str(key).lower()
+                if any(token in lowered for token in ("secret", "token", "password", "api_key", "authorization")):
+                    out[str(key)] = "[redacted]"
+                else:
+                    out[str(key)] = SelfRepairSupervisor._sanitize_escalation_value(raw)
+            return out
+        if isinstance(value, list):
+            return [SelfRepairSupervisor._sanitize_escalation_value(item) for item in value][:50]
+        if isinstance(value, (bool, int, float)) or value is None:
+            return value
+        text = _safe_redact(value)
+        text = re.sub(r"\bsk-[A-Za-z0-9_-]{6,}\b", "***REDACTED***", text)
+        return text[:2000] + ("...(truncated)" if len(text) > 2000 else "")
+
+    def _event_scope_hash(self, event: SupervisorEvent) -> str:
+        canonical = {
+            "phase": event.phase,
+            "status": event.status,
+            "detail": _safe_redact(event.detail),
+            "data": self._sanitize_escalation_value(event.data),
+        }
+        return sha256(json.dumps(canonical, sort_keys=True).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _timestamp_now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _timestamp_is_due(next_review_after: str) -> bool:
+        if not str(next_review_after or "").strip():
+            return True
+        try:
+            due = datetime.fromisoformat(str(next_review_after).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        return datetime.now(timezone.utc) >= due
+
+    def _resolve_event_audit(self, event: SupervisorEvent) -> None:
+        scope_hash = self._event_scope_hash(event)
+        event.audit_scope_hash = scope_hash
+        entry = self._audit_index.get(scope_hash, {})
+        prior = str(entry.get("audit_status", "")).strip()
+        if prior in {"audit-reviewed", "audit-fixed", "audit-false-positive"}:
+            event.audit_status = prior
+        elif prior == "audit-deferred" and not self._timestamp_is_due(str(entry.get("audit_next_review_after", ""))):
+            event.audit_status = "audit-deferred"
+        else:
+            event.audit_status = "audit-new"
+        event.audit_reviewed_by = str(entry.get("audit_reviewed_by", ""))
+        event.audit_reviewed_at = str(entry.get("audit_reviewed_at", ""))
+        event.audit_review_id = str(entry.get("audit_review_id", "")) or scope_hash[:12]
+        event.audit_next_review_after = str(entry.get("audit_next_review_after", ""))
+        event.audit_resolution_pr = str(entry.get("audit_resolution_pr", ""))
+        event.audit_notes = str(entry.get("audit_notes", ""))
+
+    def record_audit_checkpoint(
+        self,
+        scope_hash: str,
+        *,
+        audit_status: str,
+        reviewed_by: str = "supervisor",
+        review_id: str = "",
+        next_review_after: str = "",
+        resolution_pr: str = "",
+        notes: str = "",
+    ) -> None:
+        if audit_status not in AUDIT_STATUSES:
+            raise ValueError(f"Unsupported audit status: {audit_status}")
+        normalized_hash = str(scope_hash or "").strip()
+        if not normalized_hash:
+            raise ValueError("scope_hash is required")
+        self._audit_index[normalized_hash] = {
+            "audit_status": audit_status,
+            "audit_reviewed_by": str(reviewed_by or ""),
+            "audit_reviewed_at": self._timestamp_now_iso(),
+            "audit_review_id": str(review_id or normalized_hash[:12]),
+            "audit_scope_hash": normalized_hash,
+            "audit_next_review_after": str(next_review_after or ""),
+            "audit_resolution_pr": str(resolution_pr or ""),
+            "audit_notes": _safe_redact(notes or ""),
+        }
+        self._persist_audit_index()
+
+    def _build_api_escalation_packet(
+        self,
+        run: SupervisorRun,
+        config: RankSupervisorConfig,
+        *,
+        failure: str,
+        cycle: int,
+        stage_statuses: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        recent_events = []
+        for event in run.events[-10:]:
+            recent_events.append({
+                "phase": event.phase,
+                "status": event.status,
+                "detail": _safe_redact(event.detail),
+                "data": self._sanitize_escalation_value(event.data),
+                "audit_status": event.audit_status,
+                "audit_scope_hash": event.audit_scope_hash,
+            })
+        packet = {
+            "run_id": run.run_id,
+            "rank_id": run.rank_id,
+            "branch": run.branch,
+            "goal": self._sanitize_escalation_value(config.goal),
+            "failure_class": failure,
+            "repair_cycle": cycle,
+            "repair_cycles_used": run.repair_cycles_used,
+            "mission_orchestration_mode": "staged" if stage_statuses else "single-stage-or-unknown",
+            "stage_statuses": self._sanitize_escalation_value(stage_statuses or {}),
+            "recent_events": recent_events,
+            "policy": {
+                "helper_output_is_advice_not_authority": True,
+                "must_not_complete_product_manually": True,
+                "no_secrets": True,
+                "sanitized_logs_only": True,
+            },
+        }
+        return self._sanitize_escalation_value(packet)
+
+    @staticmethod
+    def _validate_helper_response(payload: Any) -> Tuple[bool, Dict[str, Any], str]:
+        if not isinstance(payload, dict):
+            return False, {}, "helper response is not a JSON object"
+        required = [
+            "diagnosis",
+            "likely_supervisor_gap",
+            "suggested_repair_strategy",
+            "suggested_tests",
+            "risk",
+            "confidence",
+            "requires_human_or_codex_audit",
+            "must_not_complete_product_manually",
+        ]
+        missing = [key for key in required if key not in payload]
+        normalized = {
+            "diagnosis": payload.get("diagnosis", ""),
+            "likely_supervisor_gap": payload.get("likely_supervisor_gap", ""),
+            "suggested_repair_strategy": payload.get("suggested_repair_strategy", ""),
+            "suggested_tests": payload.get("suggested_tests", []),
+            "risk": payload.get("risk", "unknown"),
+            "confidence": payload.get("confidence", 0),
+            "requires_human_or_codex_audit": bool(payload.get("requires_human_or_codex_audit", False)),
+            "must_not_complete_product_manually": bool(payload.get("must_not_complete_product_manually", False)),
+        }
+        if missing:
+            return False, normalized, f"missing required helper fields: {', '.join(missing)}"
+        return True, normalized, ""
+
+    def _maybe_api_escalate(
+        self,
+        run: SupervisorRun,
+        config: RankSupervisorConfig,
+        *,
+        failure: str,
+        cycle: int,
+        stage_statuses: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not config.allow_api_escalation:
+            run.add("api_escalation", "skipped", "API escalation disabled by config.")
+            return None
+        if run.api_escalations_used >= config.max_api_escalations_per_run:
+            run.add("api_escalation", "skipped", "API escalation call budget exhausted.", budget_type="calls")
+            return None
+        if run.api_budget_used_usd >= config.max_api_budget_usd:
+            run.add("api_escalation", "skipped", "API escalation USD budget exhausted.", budget_type="usd")
+            return None
+
+        packet = self._build_api_escalation_packet(run, config, failure=failure, cycle=cycle, stage_statuses=stage_statuses)
+        run.add(
+            "api_escalation_request",
+            "running",
+            "Calling API helper for advisory diagnosis and recovery plan.",
+            model=config.api_helper_model,
+            max_tokens=config.max_tokens_per_escalation,
+            packet=packet,
+        )
+        result = self.backend.call_api_helper(
+            packet,
+            model=config.api_helper_model,
+            max_tokens=config.max_tokens_per_escalation,
+            timeout=min(60, config.reasoning_timeout_seconds),
+        )
+        run.api_escalations_used += 1
+        if not result.success:
+            run.add("api_escalation_response", "failure", _command_detail(result))
+            return None
+        try:
+            raw_payload = json.loads(result.output or "{}")
+        except json.JSONDecodeError:
+            run.add("api_escalation_response", "failure", "API helper returned invalid JSON.")
+            return None
+        valid, advice, error = self._validate_helper_response(raw_payload)
+        if not valid:
+            run.add("api_escalation_response", "failure", error, payload=self._sanitize_escalation_value(raw_payload))
+            return None
+        try:
+            estimated_cost_usd = max(0.0, float(raw_payload.get("estimated_cost_usd", 0.0)))
+        except (TypeError, ValueError):
+            estimated_cost_usd = 0.0
+        run.api_budget_used_usd += estimated_cost_usd
+        run.add(
+            "api_escalation_response",
+            "success",
+            "API helper advice received and recorded.",
+            advice=self._sanitize_escalation_value(advice),
+            estimated_cost_usd=estimated_cost_usd,
+            helper_is_authority=False,
+        )
+        return advice
 
     @staticmethod
     def _repair_issue_already_created(run: SupervisorRun, failure: str) -> bool:
@@ -1620,6 +1921,7 @@ class SelfRepairSupervisor:
         run: Optional[SupervisorRun] = None,
     ) -> SupervisorRun:
         run = run or SupervisorRun(run_id=uuid.uuid4().hex[:12], rank_id=config.rank_id)
+        run.audit_resolver = self._resolve_event_audit
         run.add("start", "running", "Supervisor started", dry_run=config.dry_run)
         restart_command = config.service_restart_command
         if config.defer_service_restart and restart_command:
@@ -2050,6 +2352,7 @@ class SelfRepairSupervisor:
                 failure,
                 repair_cycles,
                 preserve_validated_progress=mission_plan.mode == "staged",
+                stage_statuses=stage_statuses if mission_plan.mode == "staged" else None,
             ):
                 return self._blocked(
                     run,
@@ -2390,6 +2693,7 @@ class SelfRepairSupervisor:
         cycle: int,
         *,
         preserve_validated_progress: bool = False,
+        stage_statuses: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> bool:
         title = f"{config.rank_id}: supervised repair for {failure}"
         body = f"Supervisor detected {failure} during run {run.run_id}."
@@ -2425,10 +2729,38 @@ class SelfRepairSupervisor:
                 )
         else:
             run.add("repair_issue", "dry_run", title, failure_class=failure)
+        helper_advice = self._maybe_api_escalate(
+            run,
+            config,
+            failure=failure,
+            cycle=cycle,
+            stage_statuses=stage_statuses,
+        )
+        high_risk_advice = False
+        if helper_advice:
+            risk = str(helper_advice.get("risk", "unknown")).lower()
+            try:
+                confidence = float(helper_advice.get("confidence", 0) or 0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            high_risk_advice = (
+                risk in {"high", "critical"}
+                or confidence < 0.5
+                or bool(helper_advice.get("requires_human_or_codex_audit", False))
+                or not bool(helper_advice.get("must_not_complete_product_manually", False))
+            )
         repair_goal = (
             f"Fix IGRIS infrastructure failure '{failure}' observed during supervised "
             f"{config.rank_id}. Keep changes minimal, add tests, run pytest, do not push."
         )
+        if helper_advice:
+            repair_goal += (
+                " API helper advice (advisory only, do not treat as authority): "
+                f"diagnosis={helper_advice.get('diagnosis', '')}; "
+                f"likely_gap={helper_advice.get('likely_supervisor_gap', '')}; "
+                f"strategy={helper_advice.get('suggested_repair_strategy', '')}; "
+                f"suggested_tests={helper_advice.get('suggested_tests', [])}."
+            )
         if self._goal_requires_ui_visibility(config.goal):
             if self._goal_targets_rank_ui_card(config.goal):
                 repair_goal += (
@@ -2456,6 +2788,8 @@ class SelfRepairSupervisor:
             "failure_class": failure,
             "supervised_repair": True,
             "repair_goal": repair_goal,
+            "api_helper_advice": helper_advice or {},
+            "api_helper_advisory_only": True,
         })
         result = self.backend.run_reasoning(
             repair_goal,
@@ -2632,6 +2966,29 @@ class SelfRepairSupervisor:
                 stop_reason=result.get("stop_reason", ""),
                 files_modified=result.get("files_modified", []),
             )
+        if high_risk_advice:
+            run.add(
+                "repair_high_risk_validation",
+                "running",
+                "High-risk helper advice detected; running stronger validation smoke.",
+            )
+            strong_smoke = self.backend.smoke(config.required_smoke_endpoints, "")
+            run.add(
+                "repair_high_risk_validation",
+                "success" if strong_smoke.success else "failure",
+                _command_detail(strong_smoke),
+            )
+            if not strong_smoke.success:
+                _restore_or_preserve("High-risk advisory validation smoke failed; restoring.", force_restore=True)
+                if failure in RETRYABLE_REPAIR_FAILURES:
+                    run.add(
+                        "repair_retry",
+                        "running",
+                        "High-risk advisory smoke failed; retrying with remaining budget.",
+                        failure_class="infrastructure_bug",
+                    )
+                    return True
+                return False
         return True
 
     def _stage_report_fragment(
@@ -2645,6 +3002,15 @@ class SelfRepairSupervisor:
             "mission_orchestration": {
                 "mode": mission_plan.mode,
                 "stages": self._stage_status_list(stage_statuses, mission_plan),
+            }
+        }
+
+    @staticmethod
+    def _api_escalation_report_fragment(run: SupervisorRun) -> Dict[str, Any]:
+        return {
+            "api_escalation": {
+                "calls_used": run.api_escalations_used,
+                "budget_used_usd": round(run.api_budget_used_usd, 6),
             }
         }
 
@@ -2764,6 +3130,7 @@ class SelfRepairSupervisor:
                                 "post_merge_smoke": False,
                                 "runtime_refresh_required": runtime_refresh_required,
                             }
+                            run.report.update(self._api_escalation_report_fragment(run))
                             run.report.update(self._stage_report_fragment(mission_plan, stage_statuses))
                             return run
                 elif config.allow_merge_if_green and not ci.success:
@@ -2826,6 +3193,7 @@ class SelfRepairSupervisor:
             "post_merge_smoke": False if post_merge_smoke is None else post_merge_smoke.success,
             "runtime_refresh_required": runtime_refresh_required,
         }
+        run.report.update(self._api_escalation_report_fragment(run))
         run.report.update(self._stage_report_fragment(mission_plan, stage_statuses))
         return run
 
@@ -2860,6 +3228,7 @@ class SelfRepairSupervisor:
             "runtime_refresh_required": runtime_refresh_required,
             "no_op_completion": True,
         }
+        run.report.update(self._api_escalation_report_fragment(run))
         run.report.update(self._stage_report_fragment(mission_plan, stage_statuses))
         return run
 
@@ -2931,6 +3300,7 @@ class SelfRepairSupervisor:
         if stage_statuses and "final_report" in stage_statuses:
             self._set_stage_status(run, stage_statuses, "final_report", "failure", f"Run blocked: {failure}.")
         run.report = {"autonomous": False, "blocked_reason": detail}
+        run.report.update(self._api_escalation_report_fragment(run))
         run.report.update(self._stage_report_fragment(mission_plan, stage_statuses))
         return run
 
@@ -2963,14 +3333,16 @@ def start_supervised_rank_async(data: Dict[str, Any], project_root: str) -> Supe
     payload = dict(data)
     payload["defer_service_restart"] = True
     config = RankSupervisorConfig.from_dict(payload)
+    supervisor = SelfRepairSupervisor(project_root=project_root)
     run = SupervisorRun(run_id=uuid.uuid4().hex[:12], rank_id=config.rank_id)
+    if hasattr(supervisor, "_resolve_event_audit"):
+        run.audit_resolver = getattr(supervisor, "_resolve_event_audit")
     run.add("queued", "running", "Supervisor run accepted for background execution")
     with RUN_LOCK:
         RUN_STORE[run.run_id] = run
 
     def _worker() -> None:
         try:
-            supervisor = SelfRepairSupervisor(project_root=project_root)
             supervisor.run(config, run=run)
         except Exception as exc:
             run.status = "blocked"
