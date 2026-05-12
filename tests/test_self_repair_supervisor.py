@@ -17,6 +17,7 @@ from igris.core.self_repair_supervisor import (
     classify_failure,
     get_supervisor_audit_summary,
     get_supervised_run,
+    summarize_supervised_run,
     start_supervised_rank_async,
 )
 from igris.web.server import create_app
@@ -2708,6 +2709,31 @@ def test_supervisor_durable_records_redact_secrets(tmp_path):
     serialized = json.dumps(_load_runs_records(tmp_path))
     assert "sk-live-super-secret" not in serialized
     assert "sk-secret-should-not-leak" not in serialized
+
+
+def test_completed_with_failure_requires_resolved_or_degraded_flag():
+    run = SupervisorRun(run_id="run-complete-failure", rank_id="S")
+    run.status = "completed"
+    run.outcome = "Completed"
+    run.failure_class = "syntax_error"
+    run.report = {}
+    run.add("finish", "success", "done")
+
+    summary = summarize_supervised_run(run)
+    assert summary["state_conflict"] is True
+    assert "Completed run has failure_class" in summary["warning"]
+
+
+def test_completed_with_failure_and_degraded_flag_is_allowed():
+    run = SupervisorRun(run_id="run-complete-degraded", rank_id="S")
+    run.status = "completed"
+    run.outcome = "Completed"
+    run.failure_class = "syntax_error"
+    run.report = {"degraded_completion": True}
+    run.add("finish", "success", "done")
+
+    summary = summarize_supervised_run(run)
+    assert summary["state_conflict"] is False
 
 
 def test_rank_supervisor_api_dry_run_blocks_dirty_repo():

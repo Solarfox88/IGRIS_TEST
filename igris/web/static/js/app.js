@@ -427,6 +427,8 @@
               " | audit_reviewed=" + esc(String((((run.audit_summary || {}).counts || {})["audit-reviewed"]) || 0)) +
               " | audit_fixed=" + esc(String((((run.audit_summary || {}).counts || {})["audit-fixed"]) || 0)) +
               " | audit_deferred=" + esc(String((((run.audit_summary || {}).counts || {})["audit-deferred"]) || 0)) +
+              " | state_conflict=" + esc(String(!!run.state_conflict)) +
+              (run.warning ? (" | warning=" + esc(run.warning)) : "") +
               " | next=" + esc(next) +
               "</div>"
             );
@@ -464,6 +466,8 @@
                 " | status=" + esc(run.status || "") +
                 " | outcome=" + esc(run.outcome || "-") +
                 " | failure=" + esc(run.failure_class || "-") +
+                " | state_conflict=" + esc(String(!!run.state_conflict)) +
+                (run.warning ? (" | warning=" + esc(run.warning)) : "") +
                 "</div>"
               );
             });

@@ -998,7 +998,7 @@ class SelfRepairSupervisor:
             "timestamp": last_event.get("timestamp"),
         }
         report_data = self._sanitize_escalation_value(payload.get("report") or {})
-        return {
+        record = {
             "run_id": payload.get("run_id", ""),
             "rank_id": payload.get("rank_id", ""),
             "status": payload.get("status", ""),
@@ -1020,7 +1020,12 @@ class SelfRepairSupervisor:
             "final_report": report_data,
             "blocked_reason": str(report_data.get("blocked_reason", "")),
             "next_action": str(snapshot.get("next_action", "")),
+            "resolved_failure": bool((payload.get("report") or {}).get("resolved_failure", False)),
+            "degraded_completion": bool((payload.get("report") or {}).get("degraded_completion", False)),
+            "state_conflict": bool(snapshot.get("state_conflict", False)),
+            "warning": str(snapshot.get("warning", "")),
         }
+        return _enforce_completion_failure_invariant(record)
 
     def _persist_run_snapshot(self, run: SupervisorRun) -> None:
         record = self._persisted_run_record(run)
@@ -3554,6 +3559,73 @@ def _extract_issue_url_from_text(text: str) -> str:
     return match.group(0) if match else ""
 
 
+TERMINAL_RUN_STATUSES = {"completed", "blocked", "failed", "crashed"}
+
+
+def _is_terminal_status(status: Any) -> bool:
+    return str(status or "").strip().lower() in TERMINAL_RUN_STATUSES
+
+
+def _run_has_resolved_failure(record: Dict[str, Any]) -> bool:
+    report = record.get("final_report")
+    if not isinstance(report, dict):
+        report = {}
+    return bool(
+        report.get("resolved_failure")
+        or report.get("degraded_completion")
+        or record.get("resolved_failure")
+        or record.get("degraded_completion")
+    )
+
+
+def _enforce_completion_failure_invariant(record: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(record)
+    status = str(normalized.get("status", "")).strip().lower()
+    failure_class = str(normalized.get("failure_class", "")).strip()
+    if status == "completed" and failure_class and not _run_has_resolved_failure(normalized):
+        normalized["state_conflict"] = True
+        normalized["warning"] = (
+            "Completed run has failure_class without resolved/degraded completion flag."
+        )
+    else:
+        normalized["state_conflict"] = bool(normalized.get("state_conflict", False))
+        normalized["warning"] = str(normalized.get("warning", "") or "")
+    return normalized
+
+
+def _reconcile_run_records(
+    in_memory: Dict[str, Dict[str, Any]],
+    persisted: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    run_ids = set(in_memory.keys()) | set(persisted.keys())
+    for run_id in run_ids:
+        memory_record = in_memory.get(run_id)
+        persisted_record = persisted.get(run_id)
+        if memory_record is None and persisted_record is not None:
+            chosen = dict(persisted_record)
+        elif persisted_record is None and memory_record is not None:
+            chosen = dict(memory_record)
+        else:
+            assert memory_record is not None and persisted_record is not None
+            mem_updated = _timestamp_sort_key(memory_record.get("updated_at", 0.0))
+            per_updated = _timestamp_sort_key(persisted_record.get("updated_at", 0.0))
+            chosen = dict(memory_record if mem_updated >= per_updated else persisted_record)
+            mem_status = str(memory_record.get("status", "")).strip().lower()
+            per_status = str(persisted_record.get("status", "")).strip().lower()
+            if mem_status != per_status:
+                if _is_terminal_status(per_status) and per_updated >= mem_updated:
+                    chosen = dict(persisted_record)
+                elif _is_terminal_status(mem_status) and mem_updated >= per_updated:
+                    chosen = dict(memory_record)
+                chosen["state_conflict"] = True
+                chosen["warning"] = (
+                    f"State conflict between in-memory({mem_status}) and durable({per_status})."
+                )
+        merged[run_id] = _enforce_completion_failure_invariant(chosen)
+    return merged
+
+
 def summarize_supervised_run(run: SupervisorRun) -> Dict[str, Any]:
     payload = run.to_dict()
     events = payload.get("events") or []
@@ -3592,7 +3664,7 @@ def summarize_supervised_run(run: SupervisorRun) -> Dict[str, Any]:
     elif payload.get("status") == "completed":
         next_action = "done"
 
-    return {
+    summary = {
         "run_id": payload.get("run_id", ""),
         "rank_id": payload.get("rank_id", ""),
         "status": payload.get("status", ""),
@@ -3628,13 +3700,37 @@ def summarize_supervised_run(run: SupervisorRun) -> Dict[str, Any]:
         },
         "started_at": started_at,
         "updated_at": updated_at,
+        "resolved_failure": bool((payload.get("report") or {}).get("resolved_failure", False)),
+        "degraded_completion": bool((payload.get("report") or {}).get("degraded_completion", False)),
         "next_action": next_action,
     }
+    return _enforce_completion_failure_invariant(summary)
 
 
 def list_active_supervised_runs() -> List[SupervisorRun]:
     with RUN_LOCK:
         return [run for run in RUN_STORE.values() if run.status == "running"]
+
+
+def list_active_supervised_run_summaries(project_root: str) -> List[Dict[str, Any]]:
+    in_memory_active: Dict[str, Dict[str, Any]] = {}
+    with RUN_LOCK:
+        for run in RUN_STORE.values():
+            if str(run.status).strip().lower() != "running":
+                continue
+            in_memory_active[str(run.run_id)] = summarize_supervised_run(run)
+    persisted = {
+        str(item.get("run_id", "")): dict(item)
+        for item in _load_persisted_recent_runs(project_root)
+        if str(item.get("run_id", "")).strip()
+    }
+    reconciled = _reconcile_run_records(in_memory_active, persisted)
+    active = [
+        record for record in reconciled.values()
+        if str(record.get("status", "")).strip().lower() == "running"
+    ]
+    active.sort(key=lambda item: _timestamp_sort_key(item.get("updated_at", 0.0)), reverse=True)
+    return active
 
 
 def _load_persisted_recent_runs(project_root: str) -> List[Dict[str, Any]]:
@@ -3674,43 +3770,34 @@ def _load_persisted_recent_runs(project_root: str) -> List[Dict[str, Any]]:
                 "created_at": str(raw.get("created_at", "")),
                 "blocked_reason": _safe_redact(raw.get("blocked_reason", "")),
                 "next_action": str(raw.get("next_action", "")),
+                "resolved_failure": bool(raw.get("resolved_failure", False)),
+                "degraded_completion": bool(raw.get("degraded_completion", False)),
+                "state_conflict": bool(raw.get("state_conflict", False)),
+                "warning": str(raw.get("warning", "")),
             }
         )
     out.sort(key=lambda item: _timestamp_sort_key(item.get("updated_at", "")), reverse=True)
-    return out[:20]
+    return [_enforce_completion_failure_invariant(item) for item in out[:20]]
 
 
 def get_supervisor_audit_summary(project_root: str) -> Dict[str, Any]:
     in_memory_events: List[Dict[str, Any]] = []
-    recent_runs: List[Dict[str, Any]] = []
+    recent_runs: Dict[str, Dict[str, Any]] = {}
     with RUN_LOCK:
         for run in RUN_STORE.values():
-            payload = run.to_dict()
-            events = payload.get("events") or []
+            summary = summarize_supervised_run(run)
+            events = (run.to_dict().get("events") or [])
             in_memory_events.extend(events)
-            updated_at = events[-1].get("timestamp") if events else 0.0
-            recent_runs.append(
-                {
-                    "run_id": payload.get("run_id", ""),
-                    "rank_id": payload.get("rank_id", ""),
-                    "status": payload.get("status", ""),
-                    "outcome": payload.get("outcome", ""),
-                    "failure_class": payload.get("failure_class", ""),
-                    "updated_at": updated_at,
-                    "api_escalations_used": int(payload.get("api_escalations_used", 0) or 0),
-                    "api_budget_used_usd": round(_safe_float(payload.get("api_budget_used_usd", 0.0)), 6),
-                }
-            )
-    recent_runs.sort(key=lambda item: _timestamp_sort_key(item.get("updated_at", 0.0)), reverse=True)
-    persisted_recent_runs = _load_persisted_recent_runs(project_root)
-    merged_recent: Dict[str, Dict[str, Any]] = {}
-    for item in persisted_recent_runs:
-        merged_recent[str(item.get("run_id", ""))] = item
-    for item in recent_runs:
-        run_id = str(item.get("run_id", ""))
-        existing = merged_recent.get(run_id)
-        if existing is None or _timestamp_sort_key(item.get("updated_at", 0.0)) >= _timestamp_sort_key(existing.get("updated_at", 0.0)):
-            merged_recent[run_id] = item
+            run_id = str(summary.get("run_id", "")).strip()
+            if run_id:
+                recent_runs[run_id] = summary
+
+    persisted_recent_runs = {
+        str(item.get("run_id", "")): dict(item)
+        for item in _load_persisted_recent_runs(project_root)
+        if str(item.get("run_id", "")).strip()
+    }
+    merged_recent = _reconcile_run_records(recent_runs, persisted_recent_runs)
     merged_recent_runs = sorted(
         merged_recent.values(),
         key=lambda item: _timestamp_sort_key(item.get("updated_at", 0.0)),

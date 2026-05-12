@@ -124,6 +124,78 @@ def test_active_endpoint_includes_only_running_runs(client, isolated_run_store):
     assert run_blocked.run_id not in ids
 
 
+def test_active_endpoint_suppresses_stale_running_when_persisted_terminal_newer(
+    client, isolated_run_store, tmp_path, monkeypatch
+):
+    run = _seed_run(run_id="conflict-run-001", status="running")
+    # Force old in-memory timestamp.
+    for event in run.events:
+        event.timestamp = 1000.0
+    with sup.RUN_LOCK:
+        sup.RUN_STORE[run.run_id] = run
+
+    audit_dir = tmp_path / ".igris"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "supervisor_runs.json").write_text(
+        json.dumps(
+            {
+                "runs": {
+                    run.run_id: {
+                        "run_id": run.run_id,
+                        "rank_id": "S-full-e2e",
+                        "status": "completed",
+                        "outcome": "Completed",
+                        "failure_class": "",
+                        "updated_at": "2099-01-01T00:00:00+00:00",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(CONFIG, "project_root", Path(tmp_path))
+
+    r = client.get("/api/rank/runs/active")
+    assert r.status_code == 200
+    assert all(item.get("run_id") != run.run_id for item in r.json().get("runs", []))
+
+
+def test_active_endpoint_prefers_newer_running_over_old_terminal_persisted(
+    client, isolated_run_store, tmp_path, monkeypatch
+):
+    run = _seed_run(run_id="conflict-run-002", status="running")
+    with sup.RUN_LOCK:
+        sup.RUN_STORE[run.run_id] = run
+
+    audit_dir = tmp_path / ".igris"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "supervisor_runs.json").write_text(
+        json.dumps(
+            {
+                "runs": {
+                    run.run_id: {
+                        "run_id": run.run_id,
+                        "rank_id": "S-full-e2e",
+                        "status": "completed",
+                        "outcome": "Completed",
+                        "failure_class": "",
+                        "updated_at": "2000-01-01T00:00:00+00:00",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(CONFIG, "project_root", Path(tmp_path))
+
+    r = client.get("/api/rank/runs/active")
+    assert r.status_code == 200
+    matches = [item for item in r.json().get("runs", []) if item.get("run_id") == run.run_id]
+    assert matches
+    assert matches[0]["status"] == "running"
+    assert matches[0]["state_conflict"] is True
+
+
 def test_stage_summary_contains_success_failure_pending(client, isolated_run_store):
     run = _seed_run(run_id="stage-summary-001", status="running")
     with sup.RUN_LOCK:
@@ -311,6 +383,8 @@ def test_ui_js_audit_fallback_render_present(client):
     assert "Audit & Escalations" in js
     assert "Recent Runs:" in js
     assert "not available (in-memory history reset after restart)" in js
+    assert "state_conflict=" in js
+    assert "warning=" in js
 
 
 def test_ui_js_loading_not_terminal_state(client):

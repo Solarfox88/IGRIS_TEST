@@ -2665,11 +2665,8 @@ def create_app() -> FastAPI:
     @app.get("/api/rank/runs/active")
     async def api_rank_runs_active() -> Dict[str, object]:
         """List active supervised rank runs with compact summaries."""
-        from igris.core.self_repair_supervisor import (
-            list_active_supervised_runs,
-            summarize_supervised_run,
-        )
-        runs = [summarize_supervised_run(run) for run in list_active_supervised_runs()]
+        from igris.core.self_repair_supervisor import list_active_supervised_run_summaries
+        runs = list_active_supervised_run_summaries(project_root=str(CONFIG.project_root))
         return {"runs": runs}
 
     @app.get("/api/rank/runs/{run_id}/summary")
