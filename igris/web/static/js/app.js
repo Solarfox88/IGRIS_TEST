@@ -106,6 +106,8 @@
       max_api_escalations_per_run: 2,
       max_api_budget_usd: 1.50,
       max_tokens_per_escalation: 4000,
+      test_timeout_seconds: 120,
+      test_hard_cap_seconds: 3600,
       service_restart_command: "sudo -n systemctl restart igris",
       required_smoke_endpoints: [
         "http://127.0.0.1:7778/api/health",

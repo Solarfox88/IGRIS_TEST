@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -142,7 +144,13 @@ class RankSupervisorConfig:
     targeted_tests: List[str] = field(default_factory=list)
     dry_run: bool = True
     defer_service_restart: bool = False
-    test_timeout_seconds: int = 240
+    # Idle timeout: kill the pytest subprocess only when it produces *no output*
+    # for this many seconds.  A healthy (but slow) suite keeps printing dots, so
+    # the timer resets on every line; only a hung/stuck process is killed.
+    test_timeout_seconds: int = 120
+    # Absolute ceiling: kill unconditionally after this many seconds regardless
+    # of output activity (safety net against infinite-loop tests).
+    test_hard_cap_seconds: int = 3600
     reasoning_timeout_seconds: int = 300
     allow_api_escalation: bool = False
     max_api_escalations_per_run: int = 0
@@ -167,7 +175,8 @@ class RankSupervisorConfig:
             ),
             dry_run=_infer_dry_run(data),
             defer_service_restart=bool(data.get("defer_service_restart", False)),
-            test_timeout_seconds=max(30, int(data.get("test_timeout_seconds", 240))),
+            test_timeout_seconds=max(30, int(data.get("test_timeout_seconds", 120))),
+            test_hard_cap_seconds=max(60, int(data.get("test_hard_cap_seconds", 3600))),
             reasoning_timeout_seconds=max(30, int(data.get("reasoning_timeout_seconds", 300))),
             allow_api_escalation=bool(data.get("allow_api_escalation", False)),
             max_api_escalations_per_run=max(0, int(data.get("max_api_escalations_per_run", 0))),
@@ -293,7 +302,7 @@ class SupervisorBackend(Protocol):
     def run_reasoning(self, goal: str, max_steps: int, initial_context: Dict[str, Any], timeout: int = 300) -> Dict[str, Any]: ...
     def git_diff_stat(self) -> CommandResult: ...
     def git_diff(self) -> CommandResult: ...
-    def run_tests(self, targets: Optional[List[str]] = None, timeout: int = 240) -> CommandResult: ...
+    def run_tests(self, targets: Optional[List[str]] = None, timeout: int = 120, hard_cap: int = 3600) -> CommandResult: ...
     def run_test_diagnostics(self, timeout: int = 120) -> CommandResult: ...
     def smoke(self, endpoints: List[str], restart_command: str = "") -> CommandResult: ...
     def commit(self, message: str, files: Optional[List[str]] = None) -> CommandResult: ...
@@ -380,6 +389,117 @@ class LocalSupervisorBackend:
         except OSError as exc:
             return CommandResult(False, "", str(exc), 1)
 
+    def _run_adaptive(
+        self,
+        cmd: List[str],
+        *,
+        idle_timeout: int = 120,
+        hard_cap: int = 3600,
+        clean_env: bool = False,
+    ) -> CommandResult:
+        """Run a command with activity-based dynamic timeout.
+
+        The subprocess is killed only when:
+        - no output (stdout OR stderr) has been produced for ``idle_timeout``
+          seconds — the process is considered hung/stuck, OR
+        - total wall-clock time exceeds ``hard_cap`` seconds — absolute
+          safety net against infinite-loop tests.
+
+        A healthy long-running command (e.g. pytest printing progress dots)
+        continuously resets the idle timer and will never be killed by it.
+        """
+        env = self._subprocess_env(clean_for_tests=clean_env)
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(self.project_root),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except OSError as exc:
+            return CommandResult(False, "", str(exc), 1)
+
+        out_q: queue.Queue = queue.Queue()
+        err_q: queue.Queue = queue.Queue()
+
+        def _reader(pipe, q: queue.Queue) -> None:
+            try:
+                for line in pipe:
+                    q.put(line)
+            finally:
+                q.put(None)  # sentinel — pipe closed
+
+        threading.Thread(target=_reader, args=(proc.stdout, out_q), daemon=True).start()
+        threading.Thread(target=_reader, args=(proc.stderr, err_q), daemon=True).start()
+
+        stdout_parts: List[str] = []
+        stderr_parts: List[str] = []
+        start = time.monotonic()
+        last_active = start
+        out_alive = err_alive = True
+        kill_reason: Optional[str] = None
+
+        while out_alive or err_alive:
+            now = time.monotonic()
+            if now - start >= hard_cap:
+                kill_reason = f"hard cap {hard_cap}s exceeded"
+                break
+            if now - last_active >= idle_timeout:
+                kill_reason = f"no output for {idle_timeout}s (idle timeout)"
+                break
+
+            drained = False
+            for q_pipe, parts, name in (
+                (out_q, stdout_parts, "out"),
+                (err_q, stderr_parts, "err"),
+            ):
+                while True:
+                    try:
+                        chunk = q_pipe.get_nowait()
+                    except queue.Empty:
+                        break
+                    if chunk is None:
+                        if name == "out":
+                            out_alive = False
+                        else:
+                            err_alive = False
+                    else:
+                        parts.append(chunk)
+                        last_active = time.monotonic()
+                        drained = True
+
+            if not drained:
+                time.sleep(0.05)
+
+        if kill_reason:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            proc.wait()
+            return CommandResult(
+                False,
+                "".join(stdout_parts),
+                f"Command killed: {kill_reason}",
+                124,
+            )
+
+        proc.wait()
+        return CommandResult(
+            success=proc.returncode == 0,
+            output="".join(stdout_parts),
+            error="".join(stderr_parts),
+            returncode=proc.returncode,
+        )
+
     def git_status(self) -> CommandResult:
         return self._run(["git", "status", "--short"], timeout=10)
 
@@ -432,11 +552,11 @@ class LocalSupervisorBackend:
     def git_diff(self) -> CommandResult:
         return self._run(["git", "diff"], timeout=10)
 
-    def run_tests(self, targets: Optional[List[str]] = None, timeout: int = 240) -> CommandResult:
+    def run_tests(self, targets: Optional[List[str]] = None, timeout: int = 120, hard_cap: int = 3600) -> CommandResult:
         cmd = [str(self.project_root / ".venv/bin/python"), "-m", "pytest", "-q"]
         if targets:
             cmd.extend(targets)
-        return self._run(cmd, timeout=timeout, clean_env=True)
+        return self._run_adaptive(cmd, idle_timeout=timeout, hard_cap=hard_cap, clean_env=True)
 
     def run_test_diagnostics(self, timeout: int = 120) -> CommandResult:
         cmd = [
@@ -446,7 +566,7 @@ class LocalSupervisorBackend:
             "-x",
             "-vv",
         ]
-        return self._run(cmd, timeout=timeout, clean_env=True)
+        return self._run_adaptive(cmd, idle_timeout=timeout, hard_cap=timeout * 5, clean_env=True)
 
     def smoke(self, endpoints: List[str], restart_command: str = "") -> CommandResult:
         if restart_command:
@@ -2085,7 +2205,7 @@ class SelfRepairSupervisor:
             "Running baseline pytest",
             timeout_seconds=config.test_timeout_seconds,
         )
-        baseline = self.backend.run_tests(timeout=config.test_timeout_seconds)
+        baseline = self.backend.run_tests(timeout=config.test_timeout_seconds, hard_cap=config.test_hard_cap_seconds)
         run.add("baseline_tests", "success" if baseline.success else "failure", _command_detail(baseline))
         cancelled = self._cancel_if_requested(run)
         if cancelled is not None:
@@ -2336,6 +2456,7 @@ class SelfRepairSupervisor:
                     targeted = self.backend.run_tests(
                         config.targeted_tests,
                         timeout=config.test_timeout_seconds,
+                        hard_cap=config.test_hard_cap_seconds,
                     )
                 else:
                     targeted = CommandResult(True, "No targeted tests configured")
@@ -2361,7 +2482,7 @@ class SelfRepairSupervisor:
                     "Running full pytest",
                     timeout_seconds=config.test_timeout_seconds,
                 )
-                full = self.backend.run_tests(timeout=config.test_timeout_seconds)
+                full = self.backend.run_tests(timeout=config.test_timeout_seconds, hard_cap=config.test_hard_cap_seconds)
                 run.add("smoke", "running", "Running final smoke")
                 final_smoke = self.backend.smoke(config.required_smoke_endpoints, restart_command)
                 run.add("targeted_tests", "success" if targeted.success else "failure", _command_detail(targeted))
@@ -3081,7 +3202,7 @@ class SelfRepairSupervisor:
             "Running repair validation pytest",
             timeout_seconds=config.test_timeout_seconds,
         )
-        tests = self.backend.run_tests(timeout=config.test_timeout_seconds)
+        tests = self.backend.run_tests(timeout=config.test_timeout_seconds, hard_cap=config.test_hard_cap_seconds)
         run.add("repair_tests", "success" if tests.success else "failure", _command_detail(tests))
         if not tests.success:
             if failure == "missing_tests" and _is_valid_missing_tests_repair_diff(diff.output, config.goal):

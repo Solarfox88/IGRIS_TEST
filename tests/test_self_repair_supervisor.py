@@ -102,7 +102,7 @@ class FakeBackend:
     def git_diff(self):
         return self.diff
 
-    def run_tests(self, targets=None, timeout=240):
+    def run_tests(self, targets=None, timeout=120, hard_cap=3600):
         self.commands.append(f"tests:{targets or 'full'}")
         self.test_timeouts.append(timeout)
         if targets:
@@ -212,6 +212,72 @@ def test_config_infers_targeted_test_from_goal():
     })
 
     assert config.targeted_tests == ["tests/test_system_version_summary.py"]
+
+
+def test_config_default_test_timeout_is_idle_based():
+    # Regression / design test for #332: test_timeout_seconds is now an *idle*
+    # timeout (kill only on silence), not a total-wall-clock timeout.
+    # Default should be 120 s; test_hard_cap_seconds provides the absolute ceiling.
+    config = RankSupervisorConfig.from_dict({"goal": "rank"})
+    assert config.test_timeout_seconds == 120, (
+        f"test_timeout_seconds (idle) default must be 120 s (got {config.test_timeout_seconds})"
+    )
+    assert config.test_hard_cap_seconds >= 3600, (
+        f"test_hard_cap_seconds must be >= 3600 s (got {config.test_hard_cap_seconds})"
+    )
+
+
+def test_config_from_dict_preserves_explicit_test_timeout():
+    config = RankSupervisorConfig.from_dict({"goal": "rank", "test_timeout_seconds": 60, "test_hard_cap_seconds": 7200})
+    assert config.test_timeout_seconds == 60
+    assert config.test_hard_cap_seconds == 7200
+
+
+def test_run_adaptive_completes_fast_command(tmp_path):
+    """_run_adaptive should return success for a command that finishes quickly."""
+    from igris.core.self_repair_supervisor import LocalSupervisorBackend
+    backend = LocalSupervisorBackend(project_root=tmp_path)
+    result = backend._run_adaptive(
+        ["python3", "-c", "print('hello'); import sys; sys.exit(0)"],
+        idle_timeout=10,
+        hard_cap=30,
+    )
+    assert result.success
+    assert "hello" in result.output
+
+
+def test_run_adaptive_kills_idle_process(tmp_path):
+    """_run_adaptive should kill a process that stops producing output."""
+    import time as _time
+    from igris.core.self_repair_supervisor import LocalSupervisorBackend
+    backend = LocalSupervisorBackend(project_root=tmp_path)
+    result = backend._run_adaptive(
+        ["python3", "-c", "import time; print('start', flush=True); time.sleep(30)"],
+        idle_timeout=3,
+        hard_cap=60,
+    )
+    assert not result.success
+    assert result.returncode == 124
+    assert "idle" in result.error.lower() or "killed" in result.error.lower() or "no output" in result.error.lower()
+
+
+def test_run_adaptive_hard_cap_kills_talkative_process(tmp_path):
+    """_run_adaptive must kill even a chatty process when hard_cap is hit."""
+    from igris.core.self_repair_supervisor import LocalSupervisorBackend
+    backend = LocalSupervisorBackend(project_root=tmp_path)
+    # Process spams output every 0.1 s, so idle_timeout will never fire.
+    result = backend._run_adaptive(
+        ["python3", "-c",
+         "import time, sys\n"
+         "while True:\n"
+         "    print('.', end='', flush=True)\n"
+         "    time.sleep(0.1)\n"],
+        idle_timeout=60,
+        hard_cap=2,
+    )
+    assert not result.success
+    assert result.returncode == 124
+    assert "hard cap" in result.error.lower() or "exceeded" in result.error.lower()
 
 
 def test_failure_classifier_detects_max_steps_as_repairable_infrastructure_failure():
@@ -366,17 +432,26 @@ def test_command_result_serializes_bytes_safely():
 
 
 def test_local_backend_runs_commands_in_isolated_child_process(monkeypatch, tmp_path):
+    """run_tests() uses _run_adaptive (Popen-based) with a clean subprocess environment.
+
+    Verifies: start_new_session, close_fds, secret env vars stripped.
+    The idle_timeout is now internal to _run_adaptive, not a Popen kwarg.
+    """
     captured = {}
 
-    class Proc:
+    class FakeProc:
         returncode = 0
-        stdout = "ok"
-        stderr = ""
+        pid = 99999
+        stdout = iter(["ok\n"])
+        stderr = iter([])
 
-    def fake_run(cmd, **kwargs):
+        def wait(self):
+            pass
+
+    def fake_popen(cmd, **kwargs):
         captured["cmd"] = cmd
         captured.update(kwargs)
-        return Proc()
+        return FakeProc()
 
     import igris.core.self_repair_supervisor as mod
 
@@ -384,12 +459,13 @@ def test_local_backend_runs_commands_in_isolated_child_process(monkeypatch, tmp_
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-should-not-leak")
     monkeypatch.setenv("VASTAI_API_KEY", "")
     monkeypatch.setenv("PROJECT_ROOT", "/service/root")
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
 
     result = LocalSupervisorBackend(str(tmp_path)).run_tests(timeout=31)
 
     assert result.success
-    assert captured["timeout"] == 31
+    # idle_timeout is NOT passed to Popen — it is managed internally
+    assert "timeout" not in captured
     assert captured["start_new_session"] is True
     assert captured["close_fds"] is True
     assert captured["env"]["IGRIS_SUPERVISOR_CHILD"] == "1"
