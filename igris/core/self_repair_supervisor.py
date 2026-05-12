@@ -3510,9 +3510,26 @@ def list_active_supervised_runs() -> List[SupervisorRun]:
 
 def get_supervisor_audit_summary(project_root: str) -> Dict[str, Any]:
     in_memory_events: List[Dict[str, Any]] = []
+    recent_runs: List[Dict[str, Any]] = []
     with RUN_LOCK:
         for run in RUN_STORE.values():
-            in_memory_events.extend(run.to_dict().get("events") or [])
+            payload = run.to_dict()
+            events = payload.get("events") or []
+            in_memory_events.extend(events)
+            updated_at = events[-1].get("timestamp") if events else 0.0
+            recent_runs.append(
+                {
+                    "run_id": payload.get("run_id", ""),
+                    "rank_id": payload.get("rank_id", ""),
+                    "status": payload.get("status", ""),
+                    "outcome": payload.get("outcome", ""),
+                    "failure_class": payload.get("failure_class", ""),
+                    "updated_at": updated_at,
+                    "api_escalations_used": int(payload.get("api_escalations_used", 0) or 0),
+                    "api_budget_used_usd": round(_safe_float(payload.get("api_budget_used_usd", 0.0)), 6),
+                }
+            )
+    recent_runs.sort(key=lambda item: _safe_float(item.get("updated_at", 0.0)), reverse=True)
     in_memory_counts = _audit_counts_from_events(in_memory_events)
 
     persisted_counts = {status: 0 for status in sorted(AUDIT_STATUSES)}
@@ -3556,4 +3573,5 @@ def get_supervisor_audit_summary(project_root: str) -> Dict[str, Any]:
             "counts": persisted_counts,
             "deferred_due_count": deferred_due_count,
         },
+        "recent_runs": recent_runs[:5],
     }

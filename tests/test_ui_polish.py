@@ -87,6 +87,10 @@ class TestRefreshButtons:
         r = client.get("/")
         assert 'id="btn-refresh-missions"' in r.text
 
+    def test_supervisor_monitor_refresh(self, client):
+        r = client.get("/")
+        assert 'id="btn-refresh-supervisor-monitor"' in r.text
+
     def test_memory_refresh(self, client):
         r = client.get("/")
         assert 'id="btn-refresh-memory"' in r.text

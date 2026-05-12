@@ -197,6 +197,29 @@ def test_ui_contains_supervisor_monitor_label(client):
     assert r.status_code == 200
     assert "Supervisor Monitor" in r.text
     assert 'id="dash-supervisor-monitor"' in r.text
+    assert 'id="btn-refresh-supervisor-monitor"' in r.text
+    assert "Loading supervisor runs..." in r.text
+
+
+def test_ui_js_contains_supervisor_monitor_states(client):
+    r = client.get("/static/js/app.js")
+    assert r.status_code == 200
+    js = r.text
+    assert "No active supervisor runs. Start a supervised mission or view recent audit history." in js
+    assert "Supervisor monitor unavailable:" in js
+    assert "Loading supervisor runs..." in js
+    assert '"/api/rank/runs/active"' in js
+    assert '"/api/rank/audit/summary"' in js
+    assert "btn-refresh-supervisor-monitor" in js
+    assert "run.run_id" in js
+    assert "run.rank_id" in js
+    assert "run.current_stage" in js
+    assert "run.failed_stage" in js
+    assert "run.failure_class" in js
+    assert "run.repair_cycles_used" in js
+    assert "run.api_escalations_used" in js
+    assert "run.api_budget_used_usd" in js
+    assert "run.next_action" in js
 
 
 def test_summary_endpoint_does_not_expose_secrets(client, isolated_run_store):
@@ -208,3 +231,15 @@ def test_summary_endpoint_does_not_expose_secrets(client, isolated_run_store):
     assert r.status_code == 200
     text = r.text.lower()
     assert "sk-secret" not in text
+
+
+def test_audit_summary_includes_recent_runs(client, isolated_run_store):
+    run = _seed_run(run_id="recent-runs-001", status="running")
+    with sup.RUN_LOCK:
+        sup.RUN_STORE[run.run_id] = run
+
+    r = client.get("/api/rank/audit/summary")
+    assert r.status_code == 200
+    data = r.json()
+    assert "recent_runs" in data
+    assert any(item.get("run_id") == "recent-runs-001" for item in data["recent_runs"])
