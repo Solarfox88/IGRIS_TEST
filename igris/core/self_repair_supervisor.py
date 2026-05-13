@@ -4256,7 +4256,7 @@ def _extract_issue_url_from_text(text: str) -> str:
     return match.group(0) if match else ""
 
 
-TERMINAL_RUN_STATUSES = {"completed", "blocked", "failed", "crashed", "cancelled"}
+TERMINAL_RUN_STATUSES = {"completed", "blocked", "failed", "crashed", "cancelled", "interrupted"}
 
 
 def _is_terminal_status(status: Any) -> bool:
@@ -4301,6 +4301,15 @@ def _reconcile_run_records(
         persisted_record = persisted.get(run_id)
         if memory_record is None and persisted_record is not None:
             chosen = dict(persisted_record)
+            # A persisted run that is no longer in the in-memory store was
+            # interrupted by a service restart — promote it to a terminal
+            # status so it never reappears as a ghost active run.
+            if str(chosen.get("status", "")).strip().lower() == "running":
+                chosen["status"] = "interrupted"
+                chosen.setdefault(
+                    "warning",
+                    "Run was interrupted by a service restart and is no longer active.",
+                )
         elif persisted_record is None and memory_record is not None:
             chosen = dict(memory_record)
         else:

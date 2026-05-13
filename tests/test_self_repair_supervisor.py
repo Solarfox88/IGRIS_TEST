@@ -18,12 +18,14 @@ from igris.core.self_repair_supervisor import (
     SelfRepairSupervisor,
     SupervisorEvent,
     SupervisorRun,
+    TERMINAL_RUN_STATUSES,
     classify_failure,
     get_supervisor_audit_summary,
     get_supervised_run,
     summarize_supervised_run,
     start_supervised_rank_async,
     _has_flask_test_client_in_diff,
+    _reconcile_run_records,
 )
 from igris.web.server import create_app
 
@@ -4985,4 +4987,64 @@ def test_non_repeated_failure_does_not_trigger_decomposition():
     # Below threshold — should be a plain block, not decomposition_required.
     assert result.failure_class != "decomposition_required", (
         "Single timeout below threshold must not trigger decomposition_required"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Ghost / zombie run detection — service restart stale-active fix (#332)
+# ---------------------------------------------------------------------------
+
+def test_interrupted_is_terminal_status():
+    """'interrupted' must be in TERMINAL_RUN_STATUSES so ghost runs are filtered."""
+    assert "interrupted" in TERMINAL_RUN_STATUSES
+
+
+def test_reconcile_marks_persisted_only_running_as_interrupted():
+    """A run that exists only in the persisted store with status='running' was
+    killed by a service restart and must be promoted to 'interrupted'."""
+    persisted = {
+        "ghost-run": {
+            "run_id": "ghost-run",
+            "rank_id": "rank",
+            "status": "running",
+            "updated_at": "2026-05-13T01:59:07+00:00",
+        }
+    }
+    result = _reconcile_run_records(in_memory={}, persisted=persisted)
+    assert result["ghost-run"]["status"] == "interrupted", (
+        "Persisted-only running run must be promoted to 'interrupted' after restart"
+    )
+
+
+def test_reconcile_preserves_persisted_terminal_status():
+    """A persisted run that already has a terminal status must not be touched."""
+    for terminal_status in ("blocked", "completed", "cancelled", "failed", "crashed"):
+        persisted = {
+            "done-run": {
+                "run_id": "done-run",
+                "rank_id": "rank",
+                "status": terminal_status,
+                "updated_at": "2026-05-13T01:59:07+00:00",
+            }
+        }
+        result = _reconcile_run_records(in_memory={}, persisted=persisted)
+        assert result["done-run"]["status"] == terminal_status, (
+            f"Terminal status '{terminal_status}' must not be changed by reconcile"
+        )
+
+
+def test_active_runs_excludes_ghost_runs_after_restart(tmp_path):
+    """list_active_supervised_run_summaries must not surface ghost runs that
+    are only in the persisted file (i.e. were interrupted by a service restart)."""
+    runs_path = tmp_path / ".igris" / "supervisor_runs.json"
+    runs_path.parent.mkdir(parents=True)
+    runs_path.write_text(
+        '{"runs": {"ghost-18fa": {"rank_id": "rank", "status": "running",'
+        ' "updated_at": "2026-05-13T01:59:07+00:00", "latest_event": {}}}}',
+        encoding="utf-8",
+    )
+    # ghost-18fa is NOT in RUN_STORE (simulates post-restart state)
+    active = list_active_supervised_run_summaries(project_root=str(tmp_path))
+    assert not any(r["run_id"] == "ghost-18fa" for r in active), (
+        "Ghost run (persisted-only, status=running) must not appear in active runs after restart"
     )
