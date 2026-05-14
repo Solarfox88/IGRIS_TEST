@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Set, Tuple
 
 from igris.core.safety import redact_secrets
+from igris.core.failure_memory import FailureMemory, FailureRisk
 
 
 REPAIRABLE_FAILURES = {
@@ -289,6 +290,8 @@ class SupervisorRun:
     decomposition: Optional[Dict[str, Any]] = None
     # Pre-flight scope assessment produced by the mission planning pass.
     mission_scope: Optional[Dict[str, Any]] = None
+    # Goal string copied from config so it's available in terminal callbacks.
+    goal: str = ""
 
     def add(self, phase: str, status: str, detail: str = "", **data: Any) -> None:
         event = SupervisorEvent(phase=phase, status=status, detail=detail, data=data)
@@ -324,6 +327,7 @@ class SupervisorRun:
             "capability_signals": dict(self.capability_signals),
             "decomposition": self.decomposition,
             "mission_scope": self.mission_scope,
+            "goal": self.goal,
         }
 
 
@@ -1107,6 +1111,9 @@ class SelfRepairSupervisor:
         self._runs_path = Path(project_root) / ".igris" / "supervisor_runs.json"
         self._runs_lock = threading.RLock()
         self._runs_index = self._load_runs_index()
+        self._failure_memory = FailureMemory(
+            store_path=Path(project_root) / ".igris" / "failure_patterns.json"
+        )
 
     def _load_audit_index(self) -> Dict[str, Dict[str, Any]]:
         try:
@@ -1220,6 +1227,7 @@ class SelfRepairSupervisor:
         run.max_repair_cycles = config.max_repair_cycles
         run.max_api_escalations_per_run = config.max_api_escalations_per_run
         run.max_api_budget_usd = round(config.max_api_budget_usd, 6)
+        run.goal = config.goal
 
     def _cancel_if_requested(
         self,
@@ -2393,6 +2401,20 @@ class SelfRepairSupervisor:
             return cancelled
         if not smoke.success:
             return self._blocked(run, "infrastructure_bug", "Baseline smoke failed")
+
+        # Consult failure memory before any attempt — surface historical risk
+        # so the operator can see early if similar goals have failed before.
+        failure_risk = self._failure_memory.check(config.goal)
+        run.add(
+            "failure_memory",
+            "checked",
+            f"Failure memory check: risk={failure_risk.risk_level} "
+            f"similar_failures={failure_risk.similar_count}",
+            risk_level=failure_risk.risk_level,
+            similar_count=failure_risk.similar_count,
+            dominant_failure=failure_risk.dominant_failure,
+            notes=failure_risk.notes,
+        )
 
         mission_plan = self._build_mission_plan(config)
         stage_statuses = self._init_stage_statuses(mission_plan)
@@ -4022,6 +4044,50 @@ class SelfRepairSupervisor:
         )
         run.mission_scope = scope
         run.report["mission_scope"] = scope
+
+        # M3 — Model-aware escalation: when the local model says the mission is
+        # high-complexity AND the operator has configured API escalation, ask the
+        # helper for strategic advice BEFORE the first attempt.  This is purely
+        # advisory: advice is recorded in run events but never blocks the run.
+        if (
+            scope.get("estimated_complexity") == "high"
+            and config.allow_api_escalation
+            and config.max_api_escalations_per_run > 0
+        ):
+            run.add(
+                "model_aware_escalation",
+                "running",
+                "High complexity detected during planning — requesting advisory strategy from API helper.",
+                complexity="high",
+            )
+            advice = self._maybe_api_escalate(
+                run,
+                config,
+                failure="high_complexity_planning",
+                cycle=0,
+            )
+            if advice:
+                run.add(
+                    "model_aware_escalation",
+                    "success",
+                    f"Planning-phase advisory received. strategy: "
+                    f"{str(advice.get('suggested_repair_strategy',''))[:120]}",
+                    confidence=advice.get("confidence"),
+                    risk=advice.get("risk"),
+                )
+                # Surface escalation hints in the mission scope so they're
+                # visible alongside planning output.
+                scope["escalation_strategy_hint"] = advice.get("suggested_repair_strategy", "")
+                scope["escalation_risk"] = advice.get("risk", "")
+                run.mission_scope = scope
+                run.report["mission_scope"] = scope
+            else:
+                run.add(
+                    "model_aware_escalation",
+                    "skipped",
+                    "Planning-phase escalation skipped (helper not configured or budget exhausted).",
+                )
+
         return scope
 
     def _ask_igris_decompose(
@@ -4178,6 +4244,20 @@ class SelfRepairSupervisor:
         run.report.update(self._api_escalation_report_fragment(run))
         run.report.update(self._stage_report_fragment(mission_plan, stage_statuses))
         run.touch()
+        # Record capability-related failures so future runs can learn from history.
+        # Skip infrastructure/baseline failures — they're environment issues, not
+        # capability limits, and would pollute similarity matching.
+        _SKIP_MEMORY_CLASSES = frozenset({"pytest_failure", "workspace_dirty", "infrastructure_bug"})
+        if failure not in _SKIP_MEMORY_CLASSES and hasattr(self, "_failure_memory"):
+            try:
+                self._failure_memory.record(
+                    goal=getattr(run, "goal", "") or "",
+                    failure_class=failure,
+                    capability_signals=dict(run.capability_signals),
+                    repair_cycles=run.repair_cycles_used,
+                )
+            except Exception:
+                pass
         return run
 
     def _pr_body(self, run: SupervisorRun) -> str:
