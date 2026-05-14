@@ -167,7 +167,9 @@ class RankSupervisorConfig:
     # Idle timeout: kill the pytest subprocess only when it produces *no output*
     # for this many seconds.  A healthy (but slow) suite keeps printing dots, so
     # the timer resets on every line; only a hung/stuck process is killed.
-    test_timeout_seconds: int = 120
+    # 300s (5 min) accommodates individual slow integration tests that may take
+    # 2-3 min without printing, while still catching genuinely hung processes.
+    test_timeout_seconds: int = 300
     # Absolute ceiling: kill unconditionally after this many seconds regardless
     # of output activity (safety net against infinite-loop tests).
     test_hard_cap_seconds: int = 3600
@@ -196,7 +198,7 @@ class RankSupervisorConfig:
             ),
             dry_run=_infer_dry_run(data),
             defer_service_restart=bool(data.get("defer_service_restart", False)),
-            test_timeout_seconds=max(30, int(data.get("test_timeout_seconds", 120))),
+            test_timeout_seconds=max(30, int(data.get("test_timeout_seconds", 300))),
             test_hard_cap_seconds=max(60, int(data.get("test_hard_cap_seconds", 3600))),
             reasoning_timeout_seconds=max(30, int(data.get("reasoning_timeout_seconds", 300))),
             allow_api_escalation=bool(data.get("allow_api_escalation", False)),

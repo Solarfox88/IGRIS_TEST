@@ -234,10 +234,12 @@ def test_config_infers_targeted_test_from_goal():
 def test_config_default_test_timeout_is_idle_based():
     # Regression / design test for #332: test_timeout_seconds is now an *idle*
     # timeout (kill only on silence), not a total-wall-clock timeout.
-    # Default should be 120 s; test_hard_cap_seconds provides the absolute ceiling.
+    # Default is 300 s (5 min) — large enough for individual slow integration
+    # tests that may run 2-3 min without printing, while still catching genuinely
+    # hung processes.  test_hard_cap_seconds provides the absolute ceiling.
     config = RankSupervisorConfig.from_dict({"goal": "rank"})
-    assert config.test_timeout_seconds == 120, (
-        f"test_timeout_seconds (idle) default must be 120 s (got {config.test_timeout_seconds})"
+    assert config.test_timeout_seconds == 300, (
+        f"test_timeout_seconds (idle) default must be 300 s (got {config.test_timeout_seconds})"
     )
     assert config.test_hard_cap_seconds >= 3600, (
         f"test_hard_cap_seconds must be >= 3600 s (got {config.test_hard_cap_seconds})"
