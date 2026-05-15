@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import importlib.util
+import urllib.error
 import json
 import os
 import subprocess
@@ -527,7 +528,13 @@ class TestObservabilityFields:
         with patch.object(_h, "_resolve_key", return_value=(provider, "sk-fake-key-12345678901234")):
             with patch.object(_h, "_resolve_key_codex_only", return_value=("openai", "sk-fake-key-12345678901234")):
                 mock_call = MagicMock(return_value=(good, 0.001))
-                call_fn = "_call_openai" if provider == "openai" else "_call_anthropic"
+                # Route to the correct call function: Codex models use responses API
+                if provider == "anthropic":
+                    call_fn = "_call_anthropic"
+                elif _h._is_codex_model(model):
+                    call_fn = "_call_openai_responses"
+                else:
+                    call_fn = "_call_openai"
                 with patch.object(_h, call_fn, mock_call):
                     with patch.dict(os.environ, env_patch):
                         old_stdin, old_stdout = sys.stdin, sys.stdout
@@ -567,3 +574,231 @@ class TestObservabilityFields:
         output_str = json.dumps(out)
         assert "sk-fake-key" not in output_str
         assert "ANTHROPIC_API_KEY" not in output_str
+
+
+# ---------------------------------------------------------------------------
+# _is_codex_model
+# ---------------------------------------------------------------------------
+
+
+class TestIsCodexModel:
+    def test_gpt53_codex_is_codex(self):
+        assert _h._is_codex_model("gpt-5.3-codex") is True
+
+    def test_codex_mini_latest_is_codex(self):
+        assert _h._is_codex_model("codex-mini-latest") is True
+
+    def test_uppercase_codex_is_codex(self):
+        assert _h._is_codex_model("Codex-2025") is True
+
+    def test_gpt4o_mini_is_not_codex(self):
+        assert _h._is_codex_model("gpt-4o-mini") is False
+
+    def test_claude_haiku_is_not_codex(self):
+        assert _h._is_codex_model("claude-haiku-4-5-20251001") is False
+
+    def test_empty_string_is_not_codex(self):
+        assert _h._is_codex_model("") is False
+
+
+# ---------------------------------------------------------------------------
+# _resolve_model_codex_only — now validates 'codex' in name
+# ---------------------------------------------------------------------------
+
+
+class TestResolveModelCodexOnlyStrict:
+    def test_accepts_gpt53_codex(self):
+        with patch.dict(os.environ, {"IGRIS_API_HELPER_MODEL": "gpt-5.3-codex"}):
+            assert _h._resolve_model_codex_only("") == "gpt-5.3-codex"
+
+    def test_rejects_non_codex_model(self):
+        with patch.dict(os.environ, {"IGRIS_API_HELPER_MODEL": "gpt-4o-mini"}):
+            with pytest.raises(RuntimeError, match="codex_not_configured"):
+                _h._resolve_model_codex_only("")
+
+    def test_rejects_claude_model(self):
+        with patch.dict(os.environ, {"IGRIS_API_HELPER_MODEL": "claude-haiku-4-5-20251001"}):
+            with pytest.raises(RuntimeError, match="codex_not_configured"):
+                _h._resolve_model_codex_only("")
+
+
+# ---------------------------------------------------------------------------
+# _call_openai_responses — unit tests with mock HTTP
+# ---------------------------------------------------------------------------
+
+
+class TestCallOpenAIResponses:
+    def _mock_response(self, text: str, input_tokens: int = 100, output_tokens: int = 50) -> dict:
+        return {
+            "id": "resp_abc",
+            "output_text": text,
+            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        }
+
+    def _patch_urlopen(self, response_body: dict):
+        import io as _io
+        from unittest.mock import patch as _patch, MagicMock as _MM
+        body = json.dumps(response_body).encode()
+        mock_resp = _MM()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = _MM(return_value=False)
+        mock_resp.read = _MM(return_value=body)
+        return _patch("urllib.request.urlopen", return_value=mock_resp)
+
+    def test_returns_output_text(self):
+        good = '{"diagnosis": "ok", "ok": true}'
+        with self._patch_urlopen(self._mock_response(good)):
+            text, cost = _h._call_openai_responses(
+                "sk-fake", "gpt-5.3-codex", 300, "context", 30
+            )
+        assert "diagnosis" in text
+        assert cost >= 0.0
+
+    def test_falls_back_to_output_items_when_no_output_text(self):
+        resp = {
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": '{"ok": true}'}]}
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        import io as _io
+        from unittest.mock import patch as _patch, MagicMock as _MM
+        body = json.dumps(resp).encode()
+        mock_resp = _MM()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = _MM(return_value=False)
+        mock_resp.read = _MM(return_value=body)
+        with _patch("urllib.request.urlopen", return_value=mock_resp):
+            text, cost = _h._call_openai_responses(
+                "sk-fake", "gpt-5.3-codex", 300, "context", 30
+            )
+        assert '{"ok": true}' in text
+
+    def test_raises_on_http_error(self):
+        from unittest.mock import patch as _patch
+        err = urllib.error.HTTPError(
+            url="https://api.openai.com/v1/responses",
+            code=400,
+            msg="Bad Request",
+            hdrs={},  # type: ignore
+            fp=None,
+        )
+        with _patch("urllib.request.urlopen", side_effect=err):
+            with pytest.raises(RuntimeError, match="HTTP 400"):
+                _h._call_openai_responses("sk-fake", "gpt-5.3-codex", 300, "ctx", 10)
+
+    def test_does_not_use_chat_completions(self):
+        """Verify _call_openai_responses never imports or calls the openai SDK chat endpoint."""
+        import io as _io
+        from unittest.mock import patch as _patch, MagicMock as _MM
+        body = json.dumps(self._mock_response('{"ok": true}')).encode()
+        mock_resp = _MM()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = _MM(return_value=False)
+        mock_resp.read = _MM(return_value=body)
+        # Patch openai SDK to detect if chat.completions is accidentally called
+        mock_openai = _MM()
+        with _patch("urllib.request.urlopen", return_value=mock_resp):
+            with _patch.dict(sys.modules, {"openai": mock_openai}):
+                _h._call_openai_responses("sk-fake", "gpt-5.3-codex", 300, "ctx", 10)
+        mock_openai.OpenAI.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Routing: codex model uses responses API, chat model uses chat completions
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRouting:
+    def test_codex_model_routes_to_responses_api(self):
+        """main() must call _call_openai_responses, not _call_openai, for Codex models."""
+        good = json.dumps({
+            "ok": True, "summary": "ok", "diagnosis": "fine",
+            "likely_supervisor_gap": "none", "suggested_repair_strategy": "nothing",
+            "suggested_tests": [], "risk": "low", "risk_notes": [], "do_not_do": [],
+            "confidence": 0.9, "requires_human_or_codex_audit": False,
+            "must_not_complete_product_manually": True, "estimated_cost_usd": 0.001,
+        })
+        inp = json.dumps({"model": "gpt-5.3-codex", "max_tokens": 300,
+                          "packet": {"failure_class": "timeout"}})
+        import io as _io
+        responses_mock = MagicMock(return_value=(good, 0.001))
+        chat_mock = MagicMock(return_value=(good, 0.001))
+        env = {"IGRIS_API_HELPER_MODE": "codex_only", "IGRIS_API_HELPER_MODEL": "gpt-5.3-codex"}
+        with patch.object(_h, "_resolve_key_codex_only", return_value=("openai", "sk-fake")):
+            with patch.object(_h, "_call_openai_responses", responses_mock):
+                with patch.object(_h, "_call_openai", chat_mock):
+                    with patch.dict(os.environ, env):
+                        old_stdin, old_stdout = sys.stdin, sys.stdout
+                        sys.stdin = _io.StringIO(inp)
+                        sys.stdout = _io.StringIO()
+                        try:
+                            with pytest.raises(SystemExit):
+                                _h.main()
+                        finally:
+                            sys.stdin = old_stdin
+                            sys.stdout = old_stdout
+        responses_mock.assert_called_once()
+        chat_mock.assert_not_called()
+
+    def test_non_codex_openai_model_routes_to_chat_completions(self):
+        """gpt-4o-mini must use _call_openai, not _call_openai_responses."""
+        good = json.dumps({
+            "ok": True, "summary": "ok", "diagnosis": "fine",
+            "likely_supervisor_gap": "none", "suggested_repair_strategy": "nothing",
+            "suggested_tests": [], "risk": "low", "risk_notes": [], "do_not_do": [],
+            "confidence": 0.9, "requires_human_or_codex_audit": False,
+            "must_not_complete_product_manually": True, "estimated_cost_usd": 0.001,
+        })
+        inp = json.dumps({"model": "gpt-4o-mini", "max_tokens": 300,
+                          "packet": {"failure_class": "timeout"}})
+        import io as _io
+        responses_mock = MagicMock(return_value=(good, 0.001))
+        chat_mock = MagicMock(return_value=(good, 0.001))
+        with patch.object(_h, "_resolve_key", return_value=("openai", "sk-fake")):
+            with patch.object(_h, "_call_openai_responses", responses_mock):
+                with patch.object(_h, "_call_openai", chat_mock):
+                    with patch.dict(os.environ, {"IGRIS_API_HELPER_MODE": "auto"}, clear=False):
+                        old_stdin, old_stdout = sys.stdin, sys.stdout
+                        sys.stdin = _io.StringIO(inp)
+                        sys.stdout = _io.StringIO()
+                        try:
+                            with pytest.raises(SystemExit):
+                                _h.main()
+                        finally:
+                            sys.stdin = old_stdin
+                            sys.stdout = old_stdout
+        chat_mock.assert_called_once()
+        responses_mock.assert_not_called()
+
+    def test_codex_only_without_codex_model_fails(self):
+        """codex_only mode with a non-Codex model must emit codex_not_configured."""
+        inp = json.dumps({"model": "gpt-4o-mini", "max_tokens": 100, "packet": {}})
+        proc = _run_helper(
+            inp,
+            env_extra={
+                "IGRIS_API_HELPER_MODE": "codex_only",
+                "IGRIS_API_HELPER_MODEL": "gpt-4o-mini",  # not a codex model
+                "OPENAI_API_KEY": "sk-openai-fake12345678901234",
+            },
+        )
+        assert proc.returncode == 1
+        out = json.loads(proc.stdout)
+        assert out["ok"] is False
+        assert out.get("error_code") == "codex_not_configured"
+
+    def test_codex_model_output_has_observability_fields(self):
+        out = _load_helper()._parse_response(
+            '{"diagnosis":"ok","likely_supervisor_gap":"none","suggested_repair_strategy":"x",'
+            '"suggested_tests":[],"risk":"low","confidence":0.9,'
+            '"requires_human_or_codex_audit":false,"must_not_complete_product_manually":true}',
+            "gpt-5.3-codex",
+            0.001,
+            mode="codex_only",
+            provider="openai",
+            model_requested="gpt-5.3-codex",
+        )
+        assert out["api_helper_mode"] == "codex_only"
+        assert out["api_helper_provider"] == "openai"
+        assert out["api_helper_model_resolved"] == "gpt-5.3-codex"
+        assert out["codex_only"] is True

@@ -68,6 +68,8 @@ import os
 import re
 import sys
 import time
+import urllib.request
+import urllib.error
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -91,14 +93,15 @@ def _redact(text: str) -> str:
 
 def _safe_error(msg: str, exit_code: int = 1, error_code: str = "") -> None:
     """Emit a safe JSON error to stdout and exit."""
+    _mode = os.environ.get("IGRIS_API_HELPER_MODE", "auto").strip() or "auto"
     payload: Dict[str, Any] = {
         "ok": False,
         "model": "",
-        "api_helper_mode": os.environ.get("IGRIS_API_HELPER_MODE", "auto").strip() or "auto",
+        "api_helper_mode": _mode,
         "api_helper_provider": "",
         "api_helper_model_requested": "",
         "api_helper_model_resolved": "",
-        "codex_only": False,
+        "codex_only": _mode == "codex_only",
         "summary": "",
         "diagnosis": _redact(str(msg)),
         "likely_supervisor_gap": "",
@@ -189,17 +192,29 @@ def _resolve_model(requested: str, provider: str) -> str:
 def _resolve_model_codex_only(requested: str) -> str:
     """Codex-only model resolution.
 
-    IGRIS_API_HELPER_MODEL is required. No fallback to any default.
-    Raises RuntimeError with error_code on missing config.
+    IGRIS_API_HELPER_MODEL is required AND must contain 'codex'.
+    No fallback to gpt-4o-mini, claude-haiku, or any other model.
+    Raises RuntimeError with error_code embedded in message on failure.
     """
     model = os.environ.get("IGRIS_API_HELPER_MODEL", "").strip()
-    if model:
-        return model
-    raise RuntimeError(
-        "codex_not_configured: IGRIS_API_HELPER_MODEL is not set. "
-        "In codex_only mode you must explicitly configure the Codex model name. "
-        "No fallback to gpt-4o-mini or any other default is allowed."
-    )
+    if not model:
+        raise RuntimeError(
+            "codex_not_configured: IGRIS_API_HELPER_MODEL is not set. "
+            "In codex_only mode you must explicitly configure the Codex model name. "
+            "No fallback to gpt-4o-mini or any other default is allowed."
+        )
+    if not _is_codex_model(model):
+        raise RuntimeError(
+            f"codex_not_configured: IGRIS_API_HELPER_MODEL={model!r} does not appear to be a "
+            "Codex model (model name must contain 'codex'). In codex_only mode only Codex "
+            "models are accepted."
+        )
+    return model
+
+
+def _is_codex_model(model: str) -> bool:
+    """Return True when the model name identifies a Codex model."""
+    return "codex" in model.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +321,67 @@ def _call_openai(key: str, model: str, max_tokens: int, context: str, timeout: i
     input_tokens = getattr(usage, "prompt_tokens", 0)
     output_tokens = getattr(usage, "completion_tokens", 0)
     # Rough cost: $0.15/M input + $0.60/M output (gpt-4o-mini tier)
+    cost = (input_tokens * 0.15 + output_tokens * 0.60) / 1_000_000
+    return text, cost
+
+
+def _call_openai_responses(key: str, model: str, max_tokens: int, context: str, timeout: int, system_prompt: str = _SYSTEM_PROMPT) -> Tuple[str, float]:
+    """Call OpenAI /v1/responses (Responses API) — required for Codex models.
+
+    Codex models (e.g. gpt-5.3-codex) are not chat models and reject
+    /v1/chat/completions with "This is not a chat model".  The Responses API
+    accepts them via POST /v1/responses with 'instructions' + 'input'.
+
+    Uses urllib.request (stdlib) so there is no dependency on the openai SDK
+    version supporting this endpoint.
+    """
+    _RESPONSES_URL = "https://api.openai.com/v1/responses"
+    payload = json.dumps({
+        "model": model,
+        "instructions": system_prompt,
+        "input": context,
+        "max_output_tokens": max(64, min(max_tokens, 4096)),
+    }).encode()
+    req = urllib.request.Request(
+        _RESPONSES_URL,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=float(timeout)) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode(errors="replace")[:300]
+        except Exception:
+            pass
+        raise RuntimeError(f"HTTP {exc.code}: {_redact(body)}")
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"URL error: {_redact(str(exc.reason))}")
+
+    data = json.loads(raw)
+
+    # Extract text: prefer top-level 'output_text', fall back to iterating output items
+    text = str(data.get("output_text", ""))
+    if not text:
+        for item in data.get("output", []):
+            for part in item.get("content", []):
+                if part.get("type") == "output_text":
+                    text += part.get("text", "")
+            if item.get("type") == "message":
+                for part in item.get("content", []):
+                    if isinstance(part, dict) and part.get("type") in ("text", "output_text"):
+                        text += part.get("text", "")
+
+    usage = data.get("usage", {})
+    input_tokens = int(usage.get("input_tokens", 0))
+    output_tokens = int(usage.get("output_tokens", 0))
+    # Same rough rate as _call_openai
     cost = (input_tokens * 0.15 + output_tokens * 0.60) / 1_000_000
     return text, cost
 
@@ -488,10 +564,12 @@ def main() -> None:
 
     context = "\n".join(context_parts)
 
-    # Call API
+    # Call API — Codex models must use /v1/responses, not /v1/chat/completions
     try:
         if provider == "anthropic":
             raw_response, cost = _call_anthropic(api_key, model, max_tokens, context, timeout, system_prompt)
+        elif _is_codex_model(model):
+            raw_response, cost = _call_openai_responses(api_key, model, max_tokens, context, timeout, system_prompt)
         else:
             raw_response, cost = _call_openai(api_key, model, max_tokens, context, timeout, system_prompt)
     except Exception as exc:
