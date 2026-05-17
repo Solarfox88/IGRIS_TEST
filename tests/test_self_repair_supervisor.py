@@ -473,6 +473,32 @@ index 1111111..2222222 100644
     )
 
 
+def test_failure_classifier_flags_true_import_deletion_as_destructive():
+    """Removing an import that is NOT re-added must be flagged as destructive.
+
+    Regression: PR #384 removed 'import ' from the critical list entirely, which
+    allowed the model to delete FastAPI/StaticFiles/Path imports from server.py,
+    breaking the entire app (NameError at test collection time).
+    """
+    diff = """\
+diff --git a/igris/web/server.py b/igris/web/server.py
+index 1111111..2222222 100644
+--- a/igris/web/server.py
++++ b/igris/web/server.py
+@@ -1,6 +1,4 @@
+-from fastapi import FastAPI, Depends
+-from starlette.staticfiles import StaticFiles
+ import os
++import json
+
+ def create_app():
+"""
+    failure = classify_failure(diff=diff)
+    assert failure == "destructive_diff", (
+        "Deleting core imports (FastAPI, StaticFiles) must be classified as destructive_diff"
+    )
+
+
 def test_failure_classifier_does_not_mark_html_class_changes_as_destructive():
     diff = """diff --git a/igris/web/templates/index.html b/igris/web/templates/index.html
 index 1111111..2222222 100644

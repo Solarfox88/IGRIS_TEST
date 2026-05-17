@@ -849,12 +849,39 @@ def _has_destructive_diff(diff: str) -> bool:
                 continue
             python_removed_lines.append(line)
 
-    # Removing `import` lines is not inherently destructive — the model often
-    # reorganises the import block when adding new endpoints, and the test suite
-    # catches any broken imports.  Only structural deletions (app factory,
-    # class bodies) are treated as destructive.
-    critical = ("def create_app", "class ")
-    return any(any(token in line for token in critical) for line in python_removed_lines)
+    # Structural deletions (app factory, class bodies) are always destructive.
+    structural = ("def create_app", "class ")
+    if any(any(token in line for token in structural) for line in python_removed_lines):
+        return True
+
+    # Import deletions: only destructive when an import is truly removed (not
+    # reorganised).  Reorganisation removes and re-adds the same names, so the
+    # module/symbol appears in an added import line.  We compare against added
+    # import lines only (not all added text) to avoid false matches.
+    def _extract_import_names(raw: str) -> List[str]:
+        tokens = raw.lstrip("-+ \t").split()
+        if not tokens:
+            return []
+        if tokens[0] == "from" and len(tokens) >= 4:
+            return [t.rstrip(",") for t in tokens[3:] if t not in ("as", "(", ")")]
+        if tokens[0] == "import":
+            return [t.rstrip(",").split(".")[0] for t in tokens[1:] if t != "as"]
+        return []
+
+    added_import_names: set = set()
+    for line in diff.splitlines():
+        if line.startswith("+") and not line.startswith("+++") and "import " in line:
+            for name in _extract_import_names(line):
+                added_import_names.add(name)
+
+    import_removed_lines = [l for l in python_removed_lines if "import " in l]
+    for removed in import_removed_lines:
+        names = _extract_import_names(removed)
+        # If NONE of the removed names are re-added, it's a true deletion.
+        if names and not any(name in added_import_names for name in names):
+            return True
+
+    return False
 
 
 def _has_invalid_fastapi_bootstrap_diff(diff: str) -> bool:
