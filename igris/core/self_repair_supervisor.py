@@ -837,12 +837,14 @@ def _has_immediately_dangerous_diff(diff: str) -> bool:
     if paths and all(path.startswith("tests/") for path in paths):
         return False
     python_removed_lines: List[str] = []
+    python_added_lines: List[str] = []
     has_diff_headers = "diff --git " in diff
     if not has_diff_headers:
-        python_removed_lines = [
-            line for line in diff.splitlines()
-            if line.startswith("-") and not line.startswith("---")
-        ]
+        for line in diff.splitlines():
+            if line.startswith("-") and not line.startswith("---"):
+                python_removed_lines.append(line)
+            elif line.startswith("+") and not line.startswith("+++"):
+                python_added_lines.append(line)
     else:
         current_path = ""
         for line in diff.splitlines():
@@ -850,11 +852,21 @@ def _has_immediately_dangerous_diff(diff: str) -> bool:
                 parts = line.split()
                 current_path = parts[3][2:] if len(parts) >= 4 and parts[3].startswith("b/") else ""
                 continue
-            if not (current_path.endswith(".py") and line.startswith("-") and not line.startswith("---")):
+            if not current_path.endswith(".py"):
                 continue
-            python_removed_lines.append(line)
+            if line.startswith("-") and not line.startswith("---"):
+                python_removed_lines.append(line)
+            elif line.startswith("+") and not line.startswith("+++"):
+                python_added_lines.append(line)
+    # Cross-reference: a structural token in a removed line is only dangerous when
+    # the same token does NOT appear in any added line (modification vs. deletion).
     structural = ("def create_app", "class ")
-    return any(any(token in line for token in structural) for line in python_removed_lines)
+    added_text = "\n".join(python_added_lines)
+    for line in python_removed_lines:
+        for token in structural:
+            if token in line and token not in added_text:
+                return True
+    return False
 
 
 def _has_destructive_diff(diff: str) -> bool:

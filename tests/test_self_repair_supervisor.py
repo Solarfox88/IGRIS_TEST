@@ -514,6 +514,50 @@ index 1111111..2222222 100644
     assert failure != "destructive_diff"
 
 
+def test_immediately_dangerous_diff_allows_create_app_signature_change():
+    """Modifying the create_app signature (e.g. adding a parameter) must not trigger
+    the pre-test safety gate — the function is still present in the added lines."""
+    from igris.core.self_repair_supervisor import _has_immediately_dangerous_diff
+
+    diff = """\
+diff --git a/igris/web/server.py b/igris/web/server.py
+index 1111111..2222222 100644
+--- a/igris/web/server.py
++++ b/igris/web/server.py
+@@ -55,7 +55,7 @@ MODULE_DIR = Path(__file__).resolve().parent
+-def create_app() -> FastAPI:
++def create_app(overrides=None) -> FastAPI:
+     app = FastAPI(title="IGRIS_GPT", version="0.1.0")
++    @app.get('/api/diagnostics/session-resume')
++    async def session_resume():
++        runs = list_supervised_runs()
++        return {'active_runs': runs}
+"""
+    assert not _has_immediately_dangerous_diff(diff), (
+        "Modifying create_app signature must not be treated as a structural deletion"
+    )
+
+
+def test_immediately_dangerous_diff_blocks_true_create_app_deletion():
+    """Removing create_app without re-adding it must be caught by the pre-test gate."""
+    from igris.core.self_repair_supervisor import _has_immediately_dangerous_diff
+
+    diff = """\
+diff --git a/igris/web/server.py b/igris/web/server.py
+index 1111111..2222222 100644
+--- a/igris/web/server.py
++++ b/igris/web/server.py
+@@ -55,4 +55,4 @@ MODULE_DIR = Path(__file__).resolve().parent
+-def create_app() -> FastAPI:
+-    app = FastAPI()
++def make_app() -> FastAPI:
++    app = FastAPI()
+"""
+    assert _has_immediately_dangerous_diff(diff), (
+        "Removing create_app without re-adding it must trigger the safety gate"
+    )
+
+
 def test_failure_classifier_detects_invalid_bootstrap_smoke_failure():
     smoke = CommandResult(False, '{"app":"IGRIS_GPT","rank":"A++","status":"ok","capability":"ui-visible-supervised"}', "Invalid bootstrap response for /api/health", 1)
 
