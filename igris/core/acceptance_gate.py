@@ -31,8 +31,11 @@ from typing import List, Optional
 _STUB_PATTERNS = [
     # Return a plain dict where ALL values are empty literals
     re.compile(r"^\+\s+return\s+\{(?:\s*['\"][^'\"]+['\"]\s*:\s*(?:\[\]|\{\}|''\s*|\"\")\s*,?\s*)+\}", re.MULTILINE),
-    # Placeholder / TODO comments in added lines
-    re.compile(r"^\+\s*#\s*(TODO|FIXME|placeholder|Logic to gather|stub|hardcoded)", re.MULTILINE | re.IGNORECASE),
+    # Explicit work-not-done markers in added comment lines.
+    # 'placeholder' alone is excluded — it often appears in working implementations
+    # as a label (e.g., '# Placeholder session_id') rather than as a stub marker.
+    # Retained: TODO, FIXME, 'Logic to gather' (common LLM stub phrase), 'stub'.
+    re.compile(r"^\+\s*#\s*(TODO|FIXME|Logic to gather|stub\b)", re.MULTILINE | re.IGNORECASE),
     # Function body is only `pass` or `...`
     re.compile(r"^\+\s+(?:pass|\.\.\.)\s*$", re.MULTILINE),
     # JSONResponse / dict call where ALL key-value pairs are empty literals (single line)

@@ -80,9 +80,12 @@ class TestIsStubDiff:
         diff = self._make_added("    # TODO: implement this")
         assert _is_stub_diff(diff) is not None
 
-    def test_placeholder_comment_is_stub(self):
-        diff = self._make_added("    # placeholder logic here")
-        assert _is_stub_diff(diff) is not None
+    def test_placeholder_comment_alone_is_not_stub(self):
+        """'# Placeholder' is ambiguous — models use it as a label in working code.
+        Only unambiguous markers (TODO, FIXME, Logic to gather, stub) are flagged.
+        """
+        diff = self._make_added("    # Placeholder: session_id value")
+        assert _is_stub_diff(diff) is None
 
     def test_logic_to_comment_is_stub(self):
         diff = self._make_added("    # Logic to gather diagnostics data")
