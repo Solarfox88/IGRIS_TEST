@@ -70,16 +70,24 @@ def _is_stub_diff(added_text: str) -> Optional[str]:
 # Endpoint extraction from goal
 # ---------------------------------------------------------------------------
 
-_ENDPOINT_PATTERN = re.compile(r"(/(?:api/)?[\w\-/]+(?:/\{[\w]+\})*)")
+# Negative lookbehind ensures we only match '/' that is NOT preceded by a word
+# character, so embedded paths like 'igris/web/server.py' do not produce false
+# endpoints ('/web/server').
+_ENDPOINT_PATTERN = re.compile(r"(?<!\w)(/(?:api/)?[\w\-/]+(?:/\{[\w]+\})*)")
+
+# File extensions that, if present at the end of an extracted path, mean the
+# match is a file path reference, not an API endpoint.
+_FILE_EXT_RE = re.compile(r"\.\w{1,5}$")
 
 
 def extract_required_endpoints(goal: str) -> List[str]:
     """Extract API endpoint paths mentioned in the mission goal."""
     raw = _ENDPOINT_PATTERN.findall(goal)
-    # Filter noise: must contain at least one slash-segment of length ≥ 2
     return [
         ep for ep in raw
-        if len(ep) > 3 and not ep.startswith("//")
+        if len(ep) > 3
+        and not ep.startswith("//")
+        and not _FILE_EXT_RE.search(ep)  # exclude file path fragments
     ]
 
 

@@ -40,6 +40,32 @@ class TestExtractRequiredEndpoints:
         eps = extract_required_endpoints(goal)
         assert any("/api/rank/runs" in ep for ep in eps)
 
+    def test_does_not_extract_file_path_fragment(self):
+        """File paths embedded in 'in igris/web/server.py' must not be extracted as endpoints.
+
+        Regression: 'igris/web/server.py' produced '/web/server' as a false endpoint,
+        causing 'Required endpoint /web/server not found in diff' failures.
+        """
+        goal = (
+            "Implement GET /api/diagnostics/session-resume endpoint "
+            "in igris/web/server.py. Add tests in tests/test_session_resume_endpoint.py."
+        )
+        eps = extract_required_endpoints(goal)
+        assert "/web/server" not in eps, f"'/web/server' must not be extracted from file path: {eps}"
+        assert "/test_session_resume_endpoint" not in eps, (
+            f"'/test_session_resume_endpoint' must not be extracted: {eps}"
+        )
+        assert "/api/diagnostics/session-resume" in eps, (
+            f"Real endpoint must still be extracted: {eps}"
+        )
+
+    def test_does_not_extract_py_extension_path(self):
+        """Paths ending in .py or other file extensions must be excluded."""
+        goal = "Modify igris/core/supervisor.py to add /api/health endpoint"
+        eps = extract_required_endpoints(goal)
+        assert not any(ep.endswith(".py") for ep in eps), f"No .py paths should be extracted: {eps}"
+        assert "/api/health" in eps
+
 
 # ---------------------------------------------------------------------------
 # _is_stub_diff

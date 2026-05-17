@@ -3413,6 +3413,19 @@ class SelfRepairSupervisor:
                 f"continue from the beginning, prioritise writing code and tests over "
                 f"exploration, keep edits minimal, do not push)"
             )
+        elif failure == "semantic_incomplete":
+            # The previous attempt produced a stub (# Placeholder, pass, hardcoded empty
+            # values).  Repeat the original goal with explicit anti-stub guidance so the
+            # next worker implements real logic rather than a skeleton.
+            repair_goal = (
+                f"{config.goal} "
+                f"(previous attempt was rejected by the semantic acceptance gate: "
+                f"the implementation contained stub patterns such as '# Placeholder' "
+                f"comments, 'pass', or hardcoded dummy values. "
+                f"Write a real implementation with actual logic — no placeholder comments, "
+                f"no 'pass', no hardcoded empty strings. "
+                f"Keep changes minimal, add tests, run pytest, do not push.)"
+            )
         else:
             repair_goal = (
                 f"Fix IGRIS infrastructure failure '{failure}' observed during supervised "
