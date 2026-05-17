@@ -178,6 +178,9 @@ MODEL_PROFILES = (
     "endpoint_implementation",
     "risk_reviewer",
     "embedding_memory",
+    # Cost-policy profiles: mini for helper-guided cheap execution, strong for gpt-4o escalation
+    "mini_execution",
+    "strong_execution",
 )
 
 # Task type → recommended profile mapping
@@ -201,6 +204,9 @@ TASK_PROFILE_MAP: Dict[str, str] = {
     "safety_check": "deterministic",
     "policy_check": "deterministic",
     "routing": "deterministic",
+    # Cost-policy task types driven by helper advice strategy
+    "mini_execution": "mini_execution",
+    "strong_execution": "strong_execution",
 }
 
 
@@ -256,7 +262,7 @@ def _build_default_providers() -> Dict[str, ProviderConfig]:
         is_local=True,
     )
 
-    # OpenAI — model resolved from:
+    # OpenAI (mini) — model resolved from:
     #   1. IGRIS_EXECUTION_FALLBACK_MODEL env var (execution-specific override)
     #   2. CONFIG.fallback_llm.model (from FALLBACK_LLM_MODEL in .env)
     #   3. gpt-4o-mini (safe default)
@@ -272,6 +278,21 @@ def _build_default_providers() -> Dict[str, ProviderConfig]:
         api_key_env="OPENAI_API_KEY",
         cost_per_1k_input=0.15,
         cost_per_1k_output=0.60,
+        max_context=128000,
+        supports_json_mode=True,
+    )
+
+    # OpenAI (strong) — used by strong_execution profile; model resolved from:
+    #   1. IGRIS_EXECUTION_STRONG_MODEL env var
+    #   2. gpt-4o (safe default for strong escalation)
+    openai_strong_model = os.environ.get("IGRIS_EXECUTION_STRONG_MODEL") or "gpt-4o"
+    providers["openai_strong"] = ProviderConfig(
+        name="openai_strong",
+        base_url="https://api.openai.com/v1",
+        model=str(openai_strong_model),
+        api_key_env="OPENAI_API_KEY",
+        cost_per_1k_input=2.50,
+        cost_per_1k_output=10.00,
         max_context=128000,
         supports_json_mode=True,
     )
@@ -491,6 +512,9 @@ class ModelOrchestrator:
             "endpoint_implementation": ["openai", "anthropic", "deepseek"],
             "risk_reviewer": ["deepseek", "openai", "ollama"],
             "embedding_memory": ["ollama", "openai"],
+            # Cost-policy profiles for helper-guided execution strategy
+            "mini_execution": ["openai", "deepseek"],
+            "strong_execution": ["openai_strong", "openai", "deepseek"],
         }
         return chains.get(profile, ["ollama", "openai"])
 

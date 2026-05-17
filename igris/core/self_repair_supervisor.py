@@ -308,6 +308,11 @@ class SupervisorRun:
     goal: str = ""
     # Semantic acceptance gate result (set by the gate, survives report overwrites).
     acceptance_evidence: Optional[Dict[str, Any]] = None
+    # Cost-policy execution strategy telemetry.
+    strategy_used: str = ""
+    same_failure_count: int = 0
+    last_repair_failure: str = ""
+    execution_budget_used_usd: float = 0.0
 
     def add(self, phase: str, status: str, detail: str = "", **data: Any) -> None:
         event = SupervisorEvent(phase=phase, status=status, detail=detail, data=data)
@@ -369,6 +374,9 @@ class SupervisorRun:
             "decomposition": self.decomposition,
             "mission_scope": self.mission_scope,
             "goal": self.goal,
+            "strategy_used": self.strategy_used,
+            "same_failure_count": self.same_failure_count,
+            "execution_budget_used_usd": round(self.execution_budget_used_usd, 6),
         }
 
 
@@ -1549,6 +1557,16 @@ class SelfRepairSupervisor:
             "confidence": payload.get("confidence", 0),
             "requires_human_or_codex_audit": bool(payload.get("requires_human_or_codex_audit", False)),
             "must_not_complete_product_manually": bool(payload.get("must_not_complete_product_manually", False)),
+            # Execution-plan fields (optional, backward-compatible).
+            # advice_only is always True — helper is never an authority.
+            "advice_only": True,
+            "execution_plan": str(payload.get("execution_plan", "") or ""),
+            "file_targets": list(payload.get("file_targets", []) or []),
+            "operations": list(payload.get("operations", []) or []),
+            "acceptance_matrix": list(payload.get("acceptance_matrix", []) or []),
+            "required_tests": list(payload.get("required_tests", []) or []),
+            "do_not_do": list(payload.get("do_not_do", []) or []),
+            "retry_focus": str(payload.get("retry_focus", "") or ""),
         }
         if missing:
             return False, normalized, f"missing required helper fields: {', '.join(missing)}"
@@ -1652,6 +1670,81 @@ class SelfRepairSupervisor:
             codex_only=is_codex_only,
         )
         return advice
+
+    # ------------------------------------------------------------------
+    # Cost-policy execution strategy helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_max_same_failure_retries() -> int:
+        """Max consecutive same-failure repairs before escalating to strong model."""
+        try:
+            return max(1, int(os.getenv("IGRIS_MAX_SAME_FAILURE_RETRIES", "2") or "2"))
+        except (ValueError, TypeError):
+            return 2
+
+    @staticmethod
+    def _get_max_cost_per_run() -> float:
+        """USD cap per supervised run; 0 means unlimited."""
+        try:
+            return max(0.0, float(os.getenv("IGRIS_MAX_COST_PER_RUN", "0") or "0"))
+        except (ValueError, TypeError):
+            return 0.0
+
+    @staticmethod
+    def _is_codex_direct_execution_enabled() -> bool:
+        """Experimental Codex direct execution — off by default.
+
+        Only active when IGRIS_ENABLE_CODEX_DIRECT_EXECUTION=true.
+        Uses its own budget: IGRIS_MAX_CODEX_DIRECT_BUDGET_USD (default 0 = disabled).
+        """
+        return os.getenv("IGRIS_ENABLE_CODEX_DIRECT_EXECUTION", "").lower() in ("true", "1", "yes")
+
+    @staticmethod
+    def _get_max_codex_direct_budget_usd() -> float:
+        """USD cap for experimental codex direct execution; 0 means disabled."""
+        try:
+            return max(0.0, float(os.getenv("IGRIS_MAX_CODEX_DIRECT_BUDGET_USD", "0") or "0"))
+        except (ValueError, TypeError):
+            return 0.0
+
+    @staticmethod
+    def _get_max_cost_per_issue() -> float:
+        """USD cap per issue; 0 means unlimited. Not yet enforced cross-run."""
+        try:
+            return max(0.0, float(os.getenv("IGRIS_MAX_COST_PER_ISSUE", "0") or "0"))
+        except (ValueError, TypeError):
+            return 0.0
+
+    @staticmethod
+    def _strategy_for_repair(
+        run: SupervisorRun,
+        has_execution_plan: bool,
+    ) -> Tuple[str, Optional[str]]:
+        """Return (strategy_name, preferred_profile) for the next repair cycle.
+
+        Rules:
+        - No execution plan → no strategy override (return empty/None).
+        - same_failure_count < threshold → mini strategy (cheap, helper-guided).
+        - same_failure_count >= threshold → strong strategy (gpt-4o escalation).
+
+        Codex direct execution is experimental and NOT selected here; it requires
+        IGRIS_ENABLE_CODEX_DIRECT_EXECUTION=true and is handled separately.
+        """
+        if not has_execution_plan:
+            return "", None
+        max_retries = SelfRepairSupervisor._get_max_same_failure_retries()
+        if run.same_failure_count >= max_retries:
+            return "helper_advice_then_gpt4o_execution", "strong_execution"
+        return "helper_advice_then_mini_execution", "mini_execution"
+
+    @staticmethod
+    def _check_execution_budget(run: SupervisorRun) -> Optional[str]:
+        """Return failure_class string if execution budget is exceeded, else None."""
+        max_per_run = SelfRepairSupervisor._get_max_cost_per_run()
+        if max_per_run > 0 and run.execution_budget_used_usd >= max_per_run:
+            return "execution_budget_exceeded"
+        return None
 
     @staticmethod
     def _repair_issue_already_created(run: SupervisorRun, failure: str) -> bool:
@@ -3569,6 +3662,10 @@ class SelfRepairSupervisor:
                 f"strategy={helper_advice.get('suggested_repair_strategy', '')}; "
                 f"suggested_tests={helper_advice.get('suggested_tests', [])}."
             )
+            if helper_advice.get("retry_focus"):
+                repair_goal += f" retry_focus={helper_advice['retry_focus']}."
+            if helper_advice.get("do_not_do"):
+                repair_goal += f" do_not_do={helper_advice['do_not_do']}."
         if self._goal_requires_ui_visibility(config.goal):
             if self._goal_targets_rank_ui_card(config.goal):
                 repair_goal += (
@@ -3602,6 +3699,28 @@ class SelfRepairSupervisor:
                 "Verify that target API endpoints exist in igris/web/server.py before writing "
                 "tests for them; if they are missing, add the endpoint implementation first."
             )
+        # Track same-failure count: increment when the same failure class recurs.
+        if failure and failure == run.last_repair_failure:
+            run.same_failure_count += 1
+        else:
+            run.same_failure_count = 0
+        run.last_repair_failure = failure
+
+        # Execution budget guard — checked before spending reasoning resources.
+        budget_failure = self._check_execution_budget(run)
+        if budget_failure:
+            run.add(
+                "execution_budget",
+                "exceeded",
+                f"Execution budget exceeded (IGRIS_MAX_COST_PER_RUN); aborting repair.",
+                failure_class=budget_failure,
+                execution_budget_used_usd=run.execution_budget_used_usd,
+                max_cost_per_run=self._get_max_cost_per_run(),
+            )
+            run.failure_class = budget_failure
+            run.status = "failed"
+            return False
+
         repair_context = self._rank_initial_context(config)
         repair_context.update({
             "repair_cycle": cycle,
@@ -3611,6 +3730,25 @@ class SelfRepairSupervisor:
             "api_helper_advice": helper_advice or {},
             "api_helper_advisory_only": True,
         })
+
+        # Determine execution strategy when helper has provided an execution plan.
+        has_execution_plan = bool(helper_advice and str(helper_advice.get("execution_plan", "")).strip())
+        strategy, strategy_profile = self._strategy_for_repair(run, has_execution_plan)
+        if strategy:
+            run.strategy_used = strategy
+            # Inject structured plan fields so the reasoning worker can use them.
+            repair_context.update({
+                "execution_plan": helper_advice.get("execution_plan", ""),
+                "file_targets": helper_advice.get("file_targets", []),
+                "operations": helper_advice.get("operations", []),
+                "acceptance_matrix": helper_advice.get("acceptance_matrix", []),
+                "required_tests": helper_advice.get("required_tests", []),
+                "do_not_do": helper_advice.get("do_not_do", []),
+                "retry_focus": helper_advice.get("retry_focus", ""),
+                "helper_advice_strategy": strategy,
+                "helper_advice_only": True,
+            })
+
         # Escalate to cloud-first execution for repeated semantic failures or
         # when the local model is unavailable (would otherwise silently degrade
         # to deterministic fallback producing empty/stub output).
@@ -3620,8 +3758,11 @@ class SelfRepairSupervisor:
             repair_task_type = "semantic_repair"
         elif failure in {"missing_tests", "pytest_failure"} and cycle > 1:
             repair_task_type = "code_generation"
+        # Strategy profile takes precedence, then env override, then task default.
+        if strategy_profile:
+            repair_profile = strategy_profile
         env_profile = os.environ.get("IGRIS_EXECUTION_PREFERRED_PROFILE", "")
-        if env_profile:
+        if env_profile and not strategy_profile:
             repair_profile = env_profile
         run.add(
             "repair_reasoning",
@@ -3630,6 +3771,10 @@ class SelfRepairSupervisor:
             task_type=repair_task_type,
             preferred_profile=repair_profile,
             failure_class=failure,
+            strategy_used=strategy or "",
+            helper_model=config.api_helper_model if helper_advice else "",
+            has_execution_plan=has_execution_plan,
+            same_failure_count=run.same_failure_count,
         )
         result = self.backend.run_reasoning(
             repair_goal,
@@ -3639,6 +3784,12 @@ class SelfRepairSupervisor:
             task_type=repair_task_type,
             preferred_profile=repair_profile,
         )
+        # Accumulate execution cost for budget tracking.
+        try:
+            step_cost = float(result.get("estimated_cost", 0) or 0)
+        except (TypeError, ValueError):
+            step_cost = 0.0
+        run.execution_budget_used_usd += step_cost
         run.add(
             "repair_reasoning",
             str(result.get("status", "")),
@@ -3648,6 +3799,13 @@ class SelfRepairSupervisor:
             reasoning_execution_model=result.get("reasoning_execution_model", ""),
             reasoning_execution_profile=result.get("reasoning_execution_profile", ""),
             local_model_available=result.get("local_model_available", False),
+            strategy_used=strategy or "",
+            execution_model=result.get("reasoning_execution_model", ""),
+            task_type=repair_task_type,
+            prompt_tokens=result.get("input_tokens", 0),
+            output_tokens=result.get("output_tokens", 0),
+            estimated_cost=step_cost,
+            same_failure_count=run.same_failure_count,
         )
         # Record a reasoning_timeout signal when repair reasoning itself times out —
         # that also indicates the model cannot make progress on this mission.

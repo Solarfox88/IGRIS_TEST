@@ -6858,3 +6858,275 @@ class TestExecutionRoutingObservability:
         assert backend.last_task_type == "code_reasoning", (
             f"pytest_failure should use code_reasoning, got {backend.last_task_type!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Cost-policy execution strategy tests
+# ---------------------------------------------------------------------------
+
+class TestCostPolicyExecutionStrategy:
+    """Tests for helper-advice-then-mini/gpt4o execution strategy routing."""
+
+    def _make_backend_with_plan(self, execution_plan: str = "1. Add endpoint\n2. Add test"):
+        """FakeBackend whose api_helper returns a response with execution_plan."""
+        backend = FakeBackend()
+        backend.full_tests = [CommandResult(True, "ok")] * 10
+        backend.api_helper_result = CommandResult(True, json.dumps({
+            "diagnosis": "missing endpoint",
+            "likely_supervisor_gap": "endpoint not implemented",
+            "suggested_repair_strategy": "add route",
+            "suggested_tests": ["test_endpoint"],
+            "risk": "low",
+            "confidence": 0.9,
+            "requires_human_or_codex_audit": False,
+            "must_not_complete_product_manually": True,
+            "advice_only": True,
+            "execution_plan": execution_plan,
+            "file_targets": ["igris/web/server.py"],
+            "operations": ["add_route GET /api/ping"],
+            "acceptance_matrix": ["GET /api/ping returns 200"],
+            "required_tests": ["tests/test_ping.py"],
+            "do_not_do": ["do not modify existing routes"],
+            "retry_focus": "add missing endpoint first",
+            "estimated_cost_usd": 0.002,
+        }))
+        backend._api_helper_configured = True
+        return backend
+
+    # -- 1. Execution plan preserved in helper advice after validation ------
+
+    def test_helper_advice_contains_execution_plan(self):
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor
+        valid, advice, err = SelfRepairSupervisor._validate_helper_response({
+            "diagnosis": "d",
+            "likely_supervisor_gap": "g",
+            "suggested_repair_strategy": "s",
+            "suggested_tests": [],
+            "risk": "low",
+            "confidence": 0.8,
+            "requires_human_or_codex_audit": False,
+            "must_not_complete_product_manually": True,
+            "execution_plan": "step 1\nstep 2",
+            "file_targets": ["server.py"],
+            "operations": ["add_route"],
+            "acceptance_matrix": ["GET returns 200"],
+            "required_tests": ["tests/test_x.py"],
+            "do_not_do": ["no deletions"],
+            "retry_focus": "focus on endpoint",
+        })
+        assert valid
+        assert advice["execution_plan"] == "step 1\nstep 2"
+        assert advice["file_targets"] == ["server.py"]
+        assert advice["operations"] == ["add_route"]
+        assert advice["acceptance_matrix"] == ["GET returns 200"]
+        assert advice["required_tests"] == ["tests/test_x.py"]
+        assert advice["do_not_do"] == ["no deletions"]
+        assert advice["retry_focus"] == "focus on endpoint"
+        assert advice["advice_only"] is True
+
+    def test_advice_only_always_true(self):
+        """advice_only must be True even when helper omits or sets it False."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor
+        payload = {
+            "diagnosis": "d", "likely_supervisor_gap": "g",
+            "suggested_repair_strategy": "s", "suggested_tests": [],
+            "risk": "low", "confidence": 0.9,
+            "requires_human_or_codex_audit": False,
+            "must_not_complete_product_manually": True,
+            "advice_only": False,  # helper tries to claim authority
+        }
+        _, advice, _ = SelfRepairSupervisor._validate_helper_response(payload)
+        assert advice["advice_only"] is True
+
+    def test_execution_plan_defaults_to_empty_string(self):
+        """Old helper responses without execution_plan must still validate."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor
+        valid, advice, err = SelfRepairSupervisor._validate_helper_response({
+            "diagnosis": "d", "likely_supervisor_gap": "g",
+            "suggested_repair_strategy": "s", "suggested_tests": [],
+            "risk": "low", "confidence": 0.9,
+            "requires_human_or_codex_audit": False,
+            "must_not_complete_product_manually": True,
+        })
+        assert valid
+        assert advice["execution_plan"] == ""
+        assert advice["file_targets"] == []
+
+    # -- 2. Strategy selection based on same_failure_count -----------------
+
+    def test_strategy_mini_when_first_attempt(self):
+        """First failure → mini strategy."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor, SupervisorRun
+        run = SupervisorRun(run_id="r1", rank_id="test")
+        strategy, profile = SelfRepairSupervisor._strategy_for_repair(run, has_execution_plan=True)
+        assert strategy == "helper_advice_then_mini_execution"
+        assert profile == "mini_execution"
+
+    def test_strategy_strong_when_same_failure_exceeds_threshold(self, monkeypatch):
+        """After max_same_failure_retries consecutive same failures → strong strategy."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor, SupervisorRun
+        monkeypatch.setenv("IGRIS_MAX_SAME_FAILURE_RETRIES", "2")
+        run = SupervisorRun(run_id="r2", rank_id="test")
+        run.same_failure_count = 2  # at threshold
+        strategy, profile = SelfRepairSupervisor._strategy_for_repair(run, has_execution_plan=True)
+        assert strategy == "helper_advice_then_gpt4o_execution"
+        assert profile == "strong_execution"
+
+    def test_strategy_empty_without_execution_plan(self):
+        """No execution_plan → no strategy override."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor, SupervisorRun
+        run = SupervisorRun(run_id="r3", rank_id="test")
+        strategy, profile = SelfRepairSupervisor._strategy_for_repair(run, has_execution_plan=False)
+        assert strategy == ""
+        assert profile is None
+
+    # -- 3. repair_cycle passes execution_plan as context to run_reasoning --
+
+    def test_repair_cycle_passes_execution_plan_to_reasoning(self):
+        """When helper provides execution_plan, it must appear in initial_context."""
+        backend = self._make_backend_with_plan("1. Add GET /api/ping\n2. Add test")
+        supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+        config = _config(
+            max_rank_attempts=1,
+            max_repair_cycles=1,
+            allow_api_escalation=True,
+            max_api_escalations_per_run=1,
+            max_api_budget_usd=10.0,
+        )
+        run = SupervisorRun(run_id="plan-ctx", rank_id="test")
+        supervisor._repair_cycle(run=run, failure="pytest_failure", config=config, cycle=1)
+        ctx = backend.last_reasoning_context or {}
+        assert ctx.get("execution_plan"), "execution_plan must be passed to run_reasoning"
+        assert ctx.get("helper_advice_only") is True
+
+    def test_repair_cycle_sets_strategy_used_on_run(self):
+        """When helper provides execution_plan, run.strategy_used must be set."""
+        backend = self._make_backend_with_plan("do the thing")
+        supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+        config = _config(
+            allow_api_escalation=True,
+            max_api_escalations_per_run=1,
+            max_api_budget_usd=10.0,
+        )
+        run = SupervisorRun(run_id="strat-used", rank_id="test")
+        supervisor._repair_cycle(run=run, failure="pytest_failure", config=config, cycle=1)
+        assert run.strategy_used in {"helper_advice_then_mini_execution", "helper_advice_then_gpt4o_execution"}
+
+    # -- 4. Same-failure escalates from mini to gpt-4o ----------------------
+
+    def test_same_failure_escalates_to_gpt4o_profile(self, monkeypatch):
+        """After max retries with same failure, strategy_for_repair returns strong_execution."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor, SupervisorRun
+        monkeypatch.setenv("IGRIS_MAX_SAME_FAILURE_RETRIES", "1")
+        run = SupervisorRun(run_id="esc", rank_id="test")
+        run.same_failure_count = 1
+        strategy, profile = SelfRepairSupervisor._strategy_for_repair(run, has_execution_plan=True)
+        assert strategy == "helper_advice_then_gpt4o_execution"
+        assert profile == "strong_execution"
+
+    # -- 5. Budget blocks repair when exceeded -----------------------------
+
+    def test_execution_budget_blocks_repair(self, monkeypatch):
+        """When IGRIS_MAX_COST_PER_RUN exceeded, _check_execution_budget returns failure_class."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor, SupervisorRun
+        monkeypatch.setenv("IGRIS_MAX_COST_PER_RUN", "0.50")
+        run = SupervisorRun(run_id="budget-test", rank_id="test")
+        run.execution_budget_used_usd = 0.55  # over budget
+        result = SelfRepairSupervisor._check_execution_budget(run)
+        assert result == "execution_budget_exceeded"
+
+    def test_execution_budget_not_blocked_when_zero(self, monkeypatch):
+        """IGRIS_MAX_COST_PER_RUN=0 means unlimited — must not block."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor, SupervisorRun
+        monkeypatch.setenv("IGRIS_MAX_COST_PER_RUN", "0")
+        run = SupervisorRun(run_id="no-budget", rank_id="test")
+        run.execution_budget_used_usd = 999.99
+        assert SelfRepairSupervisor._check_execution_budget(run) is None
+
+    def test_repair_cycle_aborts_on_budget_exceeded(self, monkeypatch):
+        """When execution budget is exceeded, _repair_cycle must return False."""
+        monkeypatch.setenv("IGRIS_MAX_COST_PER_RUN", "0.01")
+        backend = FakeBackend()
+        backend.full_tests = [CommandResult(True, "ok")] * 10
+        supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+        config = _config(max_repair_cycles=1)
+        run = SupervisorRun(run_id="budget-abort", rank_id="test")
+        run.execution_budget_used_usd = 0.50  # already over budget
+        result = supervisor._repair_cycle(run=run, failure="pytest_failure", config=config, cycle=1)
+        assert result is False
+        assert run.failure_class == "execution_budget_exceeded"
+        # run_reasoning must NOT have been called
+        assert backend.commands == []
+
+    # -- 6. Codex direct execution flag ------------------------------------
+
+    def test_codex_direct_disabled_by_default(self, monkeypatch):
+        """Codex direct execution must be off unless IGRIS_ENABLE_CODEX_DIRECT_EXECUTION=true."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor
+        monkeypatch.delenv("IGRIS_ENABLE_CODEX_DIRECT_EXECUTION", raising=False)
+        assert SelfRepairSupervisor._is_codex_direct_execution_enabled() is False
+
+    def test_codex_direct_enabled_by_env(self, monkeypatch):
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor
+        monkeypatch.setenv("IGRIS_ENABLE_CODEX_DIRECT_EXECUTION", "true")
+        assert SelfRepairSupervisor._is_codex_direct_execution_enabled() is True
+
+    def test_codex_direct_not_selected_by_strategy_for_repair(self, monkeypatch):
+        """_strategy_for_repair must never return codex_direct regardless of env."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor, SupervisorRun
+        monkeypatch.setenv("IGRIS_ENABLE_CODEX_DIRECT_EXECUTION", "true")
+        run = SupervisorRun(run_id="no-codex-direct", rank_id="test")
+        for same in range(5):
+            run.same_failure_count = same
+            strategy, profile = SelfRepairSupervisor._strategy_for_repair(run, has_execution_plan=True)
+            assert "codex_direct" not in strategy
+
+    # -- 7. No secrets in helper advice ------------------------------------
+
+    def test_no_secrets_in_validated_advice(self):
+        """Validated advice must not contain secret-like content."""
+        from igris.core.self_repair_supervisor import SelfRepairSupervisor
+        from igris.core.safety import detect_secret_like_content
+        _, advice, _ = SelfRepairSupervisor._validate_helper_response({
+            "diagnosis": "missing endpoint",
+            "likely_supervisor_gap": "no route",
+            "suggested_repair_strategy": "add route",
+            "suggested_tests": ["test_ping"],
+            "risk": "low",
+            "confidence": 0.9,
+            "requires_human_or_codex_audit": False,
+            "must_not_complete_product_manually": True,
+            "execution_plan": "add GET /api/ping",
+            "retry_focus": "endpoint first",
+        })
+        serialized = json.dumps(advice)
+        assert not detect_secret_like_content(serialized)
+
+    # -- 8. run.strategy_used and execution_budget_used_usd in to_dict ------
+
+    def test_run_to_dict_includes_strategy_fields(self):
+        """SupervisorRun.to_dict() must include new strategy telemetry fields."""
+        from igris.core.self_repair_supervisor import SupervisorRun
+        run = SupervisorRun(run_id="td", rank_id="test")
+        run.strategy_used = "helper_advice_then_mini_execution"
+        run.execution_budget_used_usd = 0.0042
+        d = run.to_dict()
+        assert d["strategy_used"] == "helper_advice_then_mini_execution"
+        assert d["same_failure_count"] == 0
+        assert abs(d["execution_budget_used_usd"] - 0.0042) < 1e-9
+
+    # -- 9. Telemetry in repair_reasoning events ---------------------------
+
+    def test_repair_reasoning_events_include_strategy_telemetry(self):
+        """repair_reasoning events must include strategy_used and same_failure_count."""
+        backend = FakeBackend()
+        backend.full_tests = [CommandResult(True, "ok")] * 10
+        supervisor = SelfRepairSupervisor("/tmp/project", backend=backend)
+        config = _config(max_rank_attempts=1, max_repair_cycles=1)
+        run = SupervisorRun(run_id="tel", rank_id="test")
+        supervisor._repair_cycle(run=run, failure="pytest_failure", config=config, cycle=1)
+        repair_events = [e for e in run.events if e.phase == "repair_reasoning"]
+        assert repair_events, "expected at least one repair_reasoning event"
+        start_event = repair_events[0]
+        assert "strategy_used" in start_event.data
+        assert "same_failure_count" in start_event.data
