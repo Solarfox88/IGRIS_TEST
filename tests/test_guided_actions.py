@@ -199,6 +199,7 @@ class TestChatEngineIncludesActions:
         assert "Show Git Status" in labels
 
 
+@pytest.mark.slow
 class TestChatStreamIncludesActions:
     """Chat streaming includes suggested_actions in metadata."""
 
@@ -270,6 +271,7 @@ class TestActionsAPI:
         assert data["intent"] is None
         assert data["suggested_actions"] == []
 
+    @pytest.mark.slow
     def test_session_message_includes_actions(self, client):
         # Create session
         sr = client.post("/api/sessions")
@@ -282,6 +284,7 @@ class TestActionsAPI:
         assert "suggested_actions" in data
         assert len(data["suggested_actions"]) > 0
 
+    @pytest.mark.slow
     def test_session_message_no_intent_empty_actions(self, client):
         sr = client.post("/api/sessions")
         sid = sr.json()["id"]

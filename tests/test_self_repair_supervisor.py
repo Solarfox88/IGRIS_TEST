@@ -124,7 +124,7 @@ class FakeBackend:
             return self.diff_sequence.pop(0)
         return self.diff
 
-    def run_tests(self, targets=None, timeout=120, hard_cap=3600):
+    def run_tests(self, targets=None, timeout=120, hard_cap=3600, exclude_slow=False):
         self.commands.append(f"tests:{targets or 'full'}")
         self.test_timeouts.append(timeout)
         if targets:

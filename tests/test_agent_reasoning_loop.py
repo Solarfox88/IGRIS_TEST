@@ -336,8 +336,9 @@ class TestRankTaskTestCreationPolicy:
 # Run — LLM unavailable (deterministic fallback)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 class TestRunDeterministic:
-    """Test loop run when no LLM is available (most common in test env)."""
+    """Test loop run behaviour — marked slow: makes real LLM calls when providers are configured."""
 
     def test_run_blocks_without_llm(self):
         loop = AgentReasoningLoop(project_root="/tmp", max_steps=3)

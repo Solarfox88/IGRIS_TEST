@@ -12,8 +12,9 @@ def client():
     return TestClient(app)
 
 
+@pytest.mark.slow
 class TestReasoningRunAPI:
-    """Test POST /api/reasoning/run."""
+    """Test POST /api/reasoning/run — marked slow: makes real LLM calls via the API."""
 
     def test_run_basic(self, client):
         resp = client.post("/api/reasoning/run", json={
@@ -35,8 +36,9 @@ class TestReasoningRunAPI:
         assert isinstance(data["total_steps"], int)
 
 
+@pytest.mark.slow
 class TestReasoningStepAPI:
-    """Test POST /api/reasoning/step."""
+    """Test POST /api/reasoning/step — marked slow: makes real LLM calls via the API."""
 
     def test_step_basic(self, client):
         resp = client.post("/api/reasoning/step", json={
@@ -49,8 +51,9 @@ class TestReasoningStepAPI:
         assert isinstance(data["steps"], list)
 
 
+@pytest.mark.slow
 class TestReasoningStopReasonsAPI:
-    """Test GET /api/reasoning/stop-reasons."""
+    """Test GET /api/reasoning/stop-reasons — marked slow: makes real LLM calls via the API."""
 
     def test_stop_reasons(self, client):
         resp = client.get("/api/reasoning/stop-reasons")

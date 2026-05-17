@@ -25,6 +25,7 @@ class TestPingAPI:
 class TestBenchmarkRunAPI:
     """Test POST /api/benchmark/run."""
 
+    @pytest.mark.slow
     def test_deterministic(self, client):
         resp = client.post("/api/benchmark/run", json={
             "mode": "deterministic",
@@ -38,6 +39,7 @@ class TestBenchmarkRunAPI:
         assert data["mode"] == "deterministic"
         assert data["total_phases"] == 8
 
+    @pytest.mark.slow
     def test_integration_degraded(self, client):
         resp = client.post("/api/benchmark/run", json={
             "mode": "integration",

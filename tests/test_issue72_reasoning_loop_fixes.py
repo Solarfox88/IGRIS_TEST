@@ -50,8 +50,9 @@ def _make_temp_project(files: dict) -> str:
 # 1. initial_context string handling
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 class TestInitialContextHandling:
-    """The loop must accept string initial_context and normalise it."""
+    """Marked slow: calls AgentReasoningLoop.run() which makes real LLM calls."""
 
     def test_string_initial_context_normalised(self):
         loop = AgentReasoningLoop(max_steps=1, role="coder")
@@ -74,8 +75,9 @@ class TestInitialContextHandling:
         assert loop._world_state.get("note") == "42"
 
 
+@pytest.mark.slow
 class TestInitialContextAPI:
-    """API endpoint must not 500 on string initial_context."""
+    """Marked slow: POSTs to /api/reasoning/run which makes real LLM calls."""
 
     @pytest.fixture
     def client(self):

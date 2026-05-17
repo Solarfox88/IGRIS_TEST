@@ -2552,8 +2552,9 @@ class SelfRepairSupervisor:
         run.add(
             "baseline_tests",
             "running",
-            "Running baseline pytest",
+            "Running baseline pytest (-m 'not slow')",
             timeout_seconds=config.test_timeout_seconds,
+            exclude_slow=True,
         )
         baseline = self.backend.run_tests(timeout=config.test_timeout_seconds, hard_cap=config.test_hard_cap_seconds, exclude_slow=True)
         run.add("baseline_tests", "success" if baseline.success else "failure", _command_detail(baseline))
@@ -2872,8 +2873,9 @@ class SelfRepairSupervisor:
                 run.add(
                     "full_pytest",
                     "running",
-                    "Running full pytest",
+                    "Running full pytest (-m 'not slow')",
                     timeout_seconds=config.test_timeout_seconds,
+                    exclude_slow=True,
                 )
                 full = self.backend.run_tests(timeout=config.test_timeout_seconds, hard_cap=config.test_hard_cap_seconds, exclude_slow=True)
                 run.add("smoke", "running", "Running final smoke")
@@ -3804,8 +3806,9 @@ class SelfRepairSupervisor:
         run.add(
             "repair_tests",
             "running",
-            "Running repair validation pytest",
+            "Running repair validation pytest (-m 'not slow')",
             timeout_seconds=config.test_timeout_seconds,
+            exclude_slow=True,
         )
         tests = self.backend.run_tests(timeout=config.test_timeout_seconds, hard_cap=config.test_hard_cap_seconds, exclude_slow=True)
         run.add("repair_tests", "success" if tests.success else "failure", _command_detail(tests))

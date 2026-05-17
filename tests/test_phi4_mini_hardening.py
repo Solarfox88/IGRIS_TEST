@@ -78,6 +78,7 @@ class TestChatWithoutOllama:
         assert "routing_reason" in result
         assert "model" in result
 
+    @pytest.mark.slow
     def test_streaming_no_crash(self):
         from igris.core.chat_streaming import chat_stream_sync
         chunks = chat_stream_sync("hello")

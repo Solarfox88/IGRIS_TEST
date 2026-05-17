@@ -12,6 +12,7 @@ def client():
     return TestClient(app)
 
 
+@pytest.mark.slow
 class TestIntegrationRunMissionAPI:
     """Test POST /api/integration/run-mission."""
 

@@ -451,6 +451,7 @@ class TestRiskResolution:
 # ---------------------------------------------------------------------------
 
 class TestLLMReviewerFallback:
+    @pytest.mark.slow
     def test_fallback_when_no_llm(self):
         engine = CommandRiskEngine(use_llm_reviewer=True)
         # No LLM configured → falls back to deterministic

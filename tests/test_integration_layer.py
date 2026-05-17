@@ -198,6 +198,7 @@ class TestActionToFamily:
 # run_mission — with mocked reasoning loop
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 class TestRunMission:
     """Test full mission pipeline with mocked components."""
 
@@ -389,6 +390,7 @@ class TestRunMission:
 # run_single_step
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 class TestRunSingleStep:
     """Test single step execution."""
 

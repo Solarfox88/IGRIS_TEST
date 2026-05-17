@@ -98,8 +98,9 @@ class TestPhaseContextManager:
         assert "context_manager" in result.phases_completed
 
 
+@pytest.mark.slow
 class TestPhaseReasoningLoop:
-    """Test reasoning loop phase."""
+    """Test reasoning loop phase — marked slow: calls _phase_reasoning_loop which uses real LLM."""
 
     def test_loop_runs(self, tmp_path):
         runner = BenchmarkRunner(project_root=str(tmp_path))
@@ -133,8 +134,9 @@ class TestPhaseRiskEngine:
         assert "risk_engine" in result.phases_completed
 
 
+@pytest.mark.slow
 class TestPhaseTestExecution:
-    """Test test execution phase."""
+    """Test test execution phase — marked slow: spawns a pytest subprocess."""
 
     def test_runs_tests(self):
         runner = BenchmarkRunner(project_root=str(Path(__file__).parent.parent))
@@ -213,8 +215,9 @@ class TestDeterministicBenchmark:
 # Integration benchmark (degraded — no LLM)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 class TestIntegrationBenchmark:
-    """Test integration benchmark in degraded mode."""
+    """Test integration benchmark — marked slow: runs the full LLM integration pipeline."""
 
     def test_runs_without_llm(self, tmp_path):
         runner = BenchmarkRunner(project_root=str(tmp_path))

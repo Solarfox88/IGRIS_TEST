@@ -66,7 +66,10 @@ class TestStreamChunk:
         assert parsed["metadata"]["provider"] == "test"
 
 
+@pytest.mark.slow
 class TestChatStreamSync:
+    """Marked slow: makes real LLM calls via chat_stream_sync."""
+
     def test_returns_chunks(self):
         chunks = chat_stream_sync("hello")
         assert len(chunks) >= 1
