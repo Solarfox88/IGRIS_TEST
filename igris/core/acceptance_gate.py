@@ -32,10 +32,10 @@ _STUB_PATTERNS = [
     # Return a plain dict where ALL values are empty literals
     re.compile(r"^\+\s+return\s+\{(?:\s*['\"][^'\"]+['\"]\s*:\s*(?:\[\]|\{\}|''\s*|\"\")\s*,?\s*)+\}", re.MULTILINE),
     # Explicit work-not-done markers in added comment lines.
-    # 'placeholder' alone is excluded — it often appears in working implementations
-    # as a label (e.g., '# Placeholder session_id') rather than as a stub marker.
-    # Retained: TODO, FIXME, 'Logic to gather' (common LLM stub phrase), 'stub'.
-    re.compile(r"^\+\s*#\s*(TODO|FIXME|Logic to gather|stub\b)", re.MULTILINE | re.IGNORECASE),
+    # '# Placeholder for ...' is a stub marker (e.g. '# Placeholder for actual implementation').
+    # '# Placeholder: ...' with colon is excluded — used as a label in working code.
+    # Also retained: TODO, FIXME, 'Logic to gather' (common LLM stub phrase), 'stub'.
+    re.compile(r"^\+\s*#\s*(TODO|FIXME|Logic to gather|stub\b|Placeholder\s+for\b)", re.MULTILINE | re.IGNORECASE),
     # Function body is only `pass` or `...`
     re.compile(r"^\+\s+(?:pass|\.\.\.)\s*$", re.MULTILINE),
     # JSONResponse / dict call where ALL key-value pairs are empty literals (single line)

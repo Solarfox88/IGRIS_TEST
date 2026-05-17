@@ -820,6 +820,43 @@ def classify_failure(
     return "infrastructure_bug"
 
 
+def _has_immediately_dangerous_diff(diff: str) -> bool:
+    """Fast pre-test check for diffs that would definitely break the app.
+
+    Only catches two categories that cannot possibly be recovered by the test suite:
+      1. Dangerous file tokens (.env, .venv, __pycache__, etc.)
+      2. Structural deletions of def create_app or class bodies
+
+    Import-deletion detection is left to _has_destructive_diff (used post-test via
+    classify_failure), allowing the test suite to be the primary safety net.
+    """
+    dangerous_tokens = [".env", ".venv", "__pycache__", ".pytest_cache", ".igris"]
+    if any(token in diff for token in dangerous_tokens):
+        return True
+    paths = _diff_changed_paths(diff)
+    if paths and all(path.startswith("tests/") for path in paths):
+        return False
+    python_removed_lines: List[str] = []
+    has_diff_headers = "diff --git " in diff
+    if not has_diff_headers:
+        python_removed_lines = [
+            line for line in diff.splitlines()
+            if line.startswith("-") and not line.startswith("---")
+        ]
+    else:
+        current_path = ""
+        for line in diff.splitlines():
+            if line.startswith("diff --git "):
+                parts = line.split()
+                current_path = parts[3][2:] if len(parts) >= 4 and parts[3].startswith("b/") else ""
+                continue
+            if not (current_path.endswith(".py") and line.startswith("-") and not line.startswith("---")):
+                continue
+            python_removed_lines.append(line)
+    structural = ("def create_app", "class ")
+    return any(any(token in line for token in structural) for line in python_removed_lines)
+
+
 def _has_destructive_diff(diff: str) -> bool:
     dangerous_tokens = [".env", ".venv", "__pycache__", ".pytest_cache", ".igris"]
     if any(token in diff for token in dangerous_tokens):
@@ -2741,8 +2778,11 @@ class SelfRepairSupervisor:
                         "skipped",
                         "Skipped because a required implementation stage failed.",
                     )
-            elif _has_destructive_diff(diff.output):
-                run.add("safety", "blocked", "Destructive diff detected")
+            elif _has_immediately_dangerous_diff(diff.output):
+                # Dangerous tokens (.env, .venv) or structural deletions (def create_app,
+                # class) — restore without running tests as these would definitely break
+                # the app regardless of what else the model added.
+                run.add("safety", "blocked", "Immediately dangerous diff detected (tokens or structural deletion)")
                 self.backend.restore_dangerous_diff()
                 failure = "destructive_diff"
             else:
