@@ -2891,10 +2891,19 @@ class SelfRepairSupervisor:
                 # --- Semantic acceptance gate ---
                 # Verify the diff is a genuine implementation, not a stub.
                 if config.enable_semantic_gate:
+                    # When targeted tests pass, include their file paths so the gate
+                    # knows test coverage exists even if a repair cycle only touched
+                    # the implementation file (tests were already written earlier and
+                    # restored workspace left them absent from files_modified).
+                    gate_files = list(modified_files)
+                    if targeted.success and config.targeted_tests:
+                        for tf in config.targeted_tests:
+                            if tf not in gate_files:
+                                gate_files.append(tf)
                     acceptance = check_acceptance_evidence(
                         config.goal,
                         diff.output,
-                        modified_files,
+                        gate_files,
                     )
                     # Store on the run object so it survives any subsequent run.report overwrites.
                     run.acceptance_evidence = {
@@ -3106,6 +3115,13 @@ class SelfRepairSupervisor:
             "fastapi_test_policy": (
                 "API tests must import create_app from igris.web.server and use "
                 "TestClient(create_app()). Do not import app from igris.web.server."
+            ),
+            "implementation_quality_policy": (
+                "Write real implementation code, not stubs. "
+                "Do NOT add '# Placeholder', '# TODO', '# FIXME', or 'pass' in the "
+                "function body. Do NOT return empty dicts, empty lists, or empty strings "
+                "as field values. The implementation will be rejected by the semantic "
+                "acceptance gate if stub patterns are detected."
             ),
         }
         if self._goal_requires_ui_visibility(config.goal):
