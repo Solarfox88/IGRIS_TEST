@@ -928,10 +928,15 @@ def _has_immediately_dangerous_diff(diff: str) -> bool:
 
 
 def _has_destructive_diff(diff: str) -> bool:
-    dangerous_tokens = [".env", ".venv", "__pycache__", ".pytest_cache", ".igris"]
-    if any(token in diff for token in dangerous_tokens):
-        return True
     paths = _diff_changed_paths(diff)
+    # .env exact match catches the secrets file; prefix match catches venv/cache dirs.
+    # Substring matching on the raw diff is intentionally avoided to prevent false
+    # positives on safe template files like .env.example.
+    _dangerous_exact = {".env"}
+    _dangerous_prefix = (".venv/", "__pycache__/", ".pytest_cache/", ".igris/")
+    for path in paths:
+        if path in _dangerous_exact or any(path.startswith(p) for p in _dangerous_prefix):
+            return True
     if paths and all(path.startswith("tests/") for path in paths):
         return False
 

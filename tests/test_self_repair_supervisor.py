@@ -399,6 +399,37 @@ def test_failure_classifier_detects_destructive_diff():
     assert failure == "destructive_diff"
 
 
+def test_failure_classifier_does_not_flag_env_example_as_destructive():
+    diff = """diff --git a/.env.example b/.env.example
+index 1111111..2222222 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,2 +1,5 @@
+ LOCAL_LLM_PROVIDER=ollama
+ LOCAL_LLM_MODEL=phi4-mini
++LOCAL_LLM_BASE_URL=http://127.0.0.1:11434
+"""
+    failure = classify_failure(diff=diff)
+    assert failure != "destructive_diff", (
+        ".env.example additions must not be classified as destructive_diff"
+    )
+
+
+def test_failure_classifier_flags_actual_env_file_as_destructive():
+    diff = """diff --git a/.env b/.env
+index 1111111..2222222 100644
+--- a/.env
++++ b/.env
+@@ -1,2 +1,3 @@
+ SECRET_KEY=abc
++NEW_VAR=xyz
+"""
+    failure = classify_failure(diff=diff)
+    assert failure == "destructive_diff", (
+        "Modifications to .env secrets file must be classified as destructive_diff"
+    )
+
+
 def test_failure_classifier_allows_test_file_rewrite_without_marking_destructive():
     diff = """diff --git a/tests/test_rank_ui_card.py b/tests/test_rank_ui_card.py
 index 1111111..2222222 100644
