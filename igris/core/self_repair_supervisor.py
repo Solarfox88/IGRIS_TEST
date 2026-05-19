@@ -27,6 +27,15 @@ from igris.core.safety import redact_secrets
 from igris.core.failure_memory import FailureMemory, FailureRisk
 from igris.core.acceptance_gate import check_acceptance_evidence
 
+# AssignmentRouter — lazy import to avoid circular deps at module load
+_assignment_router_available = False
+try:
+    from igris.core.assignment_router import AssignmentRequest, AssignmentDecision, AssignmentRouter
+    from igris.core.assignment_outcomes import compute_task_signature, save_assignment_outcome
+    _assignment_router_available = True
+except ImportError:
+    pass
+
 
 REPAIRABLE_FAILURES = {
     "pytest_failure",
@@ -2754,6 +2763,41 @@ class SelfRepairSupervisor:
             notes=failure_risk.notes,
         )
 
+        # Pre-flight assignment routing: decide role/profile/strategy before any attempt.
+        assignment_decision: Optional[Any] = None
+        if _assignment_router_available:
+            try:
+                _outcomes_path = str(self.project_root / ".igris" / "assignment_outcomes.json")
+                _router = AssignmentRouter(outcomes_path=_outcomes_path)
+                _req = AssignmentRequest(
+                    goal_text=config.goal,
+                    risk_level="medium",
+                    failure_class="",
+                    capability_signals=dict(run.capability_signals),
+                    prior_attempts=0,
+                    local_model_available=True,
+                    budget_remaining_usd=float(config.max_api_budget_usd) or 10.0,
+                    required_tests=list(config.targeted_tests),
+                    is_repair=False,
+                    outcomes_path=_outcomes_path,
+                )
+                assignment_decision = _router.decide(_req)
+                run.add(
+                    "assignment_routing",
+                    "success",
+                    (
+                        f"role={assignment_decision.agent_role} "
+                        f"type={assignment_decision.task_type} "
+                        f"profile={assignment_decision.preferred_profile} "
+                        f"strategy={assignment_decision.execution_strategy} "
+                        f"p={assignment_decision.estimated_success_probability:.2f} "
+                        f"history={assignment_decision.history_matches}"
+                    ),
+                    **assignment_decision.to_dict(),
+                )
+            except Exception as _exc:
+                run.add("assignment_routing", "skipped", f"AssignmentRouter error: {_exc}")
+
         mission_plan = self._build_mission_plan(config)
         stage_statuses = self._init_stage_statuses(mission_plan)
         run.add(
@@ -2833,11 +2877,23 @@ class SelfRepairSupervisor:
                     "Running supervised rank reasoning",
                     timeout_seconds=config.reasoning_timeout_seconds,
                 )
+                _routed_profile = (
+                    assignment_decision.preferred_profile
+                    if assignment_decision is not None
+                    else None
+                )
+                _routed_task_type = (
+                    assignment_decision.task_type
+                    if assignment_decision is not None
+                    else "code_reasoning"
+                )
                 reasoning = self.backend.run_reasoning(
                     config.goal,
                     max_steps=220,
                     initial_context=self._rank_initial_context(config),
                     timeout=config.reasoning_timeout_seconds,
+                    task_type=_routed_task_type,
+                    preferred_profile=_routed_profile,
                 )
                 reasoning_status = str(reasoning.get("status", ""))
                 stop_reason = str(reasoning.get("stop_reason", ""))
@@ -3222,6 +3278,7 @@ class SelfRepairSupervisor:
                         )
 
                 if rank_passed:
+                    self._persist_assignment_outcome(run, self.project_root, assignment_decision)
                     return self._complete_rank(
                         run,
                         config,
@@ -3322,6 +3379,7 @@ class SelfRepairSupervisor:
         triggering_signal = self._detect_capability_limit(run)
         if triggering_signal:
             decomposition = self._ask_igris_decompose(run, config)
+            self._persist_assignment_outcome(run, self.project_root, assignment_decision)
             return self._blocked_decomposition_required(
                 run,
                 triggering_signal,
@@ -3336,6 +3394,7 @@ class SelfRepairSupervisor:
                 stage_statuses=stage_statuses,
                 cleanup_workspace=True,
             )
+        self._persist_assignment_outcome(run, self.project_root, assignment_decision)
         return self._blocked(
             run,
             run.failure_class or "max_rank_attempts",
@@ -5479,6 +5538,45 @@ class SelfRepairSupervisor:
             except Exception:
                 pass
         return run
+
+    def _persist_blocked_outcome(
+        self,
+        run: "SupervisorRun",
+        assignment_decision: Any,
+    ) -> None:
+        self._persist_assignment_outcome(run, self.project_root, assignment_decision)
+
+    @staticmethod
+    def _persist_assignment_outcome(
+        run: "SupervisorRun",
+        project_root: Any,
+        assignment_decision: Any,
+    ) -> None:
+        """Append assignment outcome record for historical learning. No-op if unavailable."""
+        if not _assignment_router_available or assignment_decision is None:
+            return
+        try:
+            outcomes_path = str(project_root / ".igris" / "assignment_outcomes.json")
+            record = {
+                "task_signature": compute_task_signature(getattr(run, "goal", "") or ""),
+                "goal_excerpt": (getattr(run, "goal", "") or "")[:200],
+                "agent_role": assignment_decision.agent_role,
+                "task_type": assignment_decision.task_type,
+                "preferred_profile": assignment_decision.preferred_profile,
+                "execution_strategy": assignment_decision.execution_strategy,
+                "model_used": assignment_decision.preferred_model,
+                "fallback_model_path": list(assignment_decision.fallback_model_path),
+                "outcome": run.status,
+                "failure_class": run.failure_class,
+                "capability_signals": dict(run.capability_signals),
+                "cost_usd": run.execution_budget_used_usd,
+                "attempts": run.repair_cycles_used + 1,
+                "created_at": run.created_at.isoformat() if hasattr(run, "created_at") and run.created_at else "",
+            }
+            save_assignment_outcome(outcomes_path, record)
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning("Failed to persist assignment outcome: %s", exc)
 
     def _pr_body(self, run: SupervisorRun) -> str:
         return "\n".join([
