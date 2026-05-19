@@ -592,6 +592,59 @@ index 1111111..2222222 100644
     )
 
 
+def test_immediately_dangerous_diff_env_token_in_content_not_path():
+    """'.env' appearing only in diff content (e.g. a docstring) must not trigger the gate.
+    The fix moves to path-level matching to avoid false positives on template files."""
+    from igris.core.self_repair_supervisor import _has_immediately_dangerous_diff
+
+    diff = """\
+diff --git a/igris/core/config.py b/igris/core/config.py
+index 1111111..2222222 100644
+--- a/igris/core/config.py
++++ b/igris/core/config.py
+@@ -1,3 +1,5 @@
++# Load settings from .env file using python-dotenv
++OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+"""
+    assert not _has_immediately_dangerous_diff(diff), (
+        "'.env' in diff content must not trigger the gate — only the '.env' path itself should"
+    )
+
+
+def test_immediately_dangerous_diff_blocks_env_file_path():
+    """A diff that actually modifies the '.env' secrets file must be blocked."""
+    from igris.core.self_repair_supervisor import _has_immediately_dangerous_diff
+
+    diff = """\
+diff --git a/.env b/.env
+index 1111111..2222222 100644
+--- a/.env
++++ b/.env
+@@ -1,2 +1,3 @@
++OPENAI_API_KEY=sk-injected
+"""
+    assert _has_immediately_dangerous_diff(diff), (
+        "Modifying the '.env' secrets file must be caught by the pre-test gate"
+    )
+
+
+def test_immediately_dangerous_diff_allows_env_example():
+    """'.env.example' is a safe template file and must not trigger the gate."""
+    from igris.core.self_repair_supervisor import _has_immediately_dangerous_diff
+
+    diff = """\
+diff --git a/.env.example b/.env.example
+index 1111111..2222222 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,2 +1,3 @@
++OPENAI_API_KEY=your-key-here
+"""
+    assert not _has_immediately_dangerous_diff(diff), (
+        "'.env.example' is a template and must not be blocked by the safety gate"
+    )
+
+
 class TestSupervisorRunIsZombie:
     def _make_run(self, status: str = "running", last_event_age_seconds: float = 0.0):
         import time

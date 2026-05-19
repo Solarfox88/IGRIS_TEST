@@ -916,10 +916,14 @@ def _has_immediately_dangerous_diff(diff: str) -> bool:
     Import-deletion detection is left to _has_destructive_diff (used post-test via
     classify_failure), allowing the test suite to be the primary safety net.
     """
-    dangerous_tokens = [".env", ".venv", "__pycache__", ".pytest_cache", ".igris"]
-    if any(token in diff for token in dangerous_tokens):
-        return True
+    # Use path-level matching (same logic as _has_destructive_diff) to avoid false
+    # positives when ".env" appears in diff content rather than as a changed path.
+    _dangerous_exact = {".env"}
+    _dangerous_prefix = (".venv/", "__pycache__/", ".pytest_cache/", ".igris/")
     paths = _diff_changed_paths(diff)
+    for path in paths:
+        if path in _dangerous_exact or any(path.startswith(p) for p in _dangerous_prefix):
+            return True
     if paths and all(path.startswith("tests/") for path in paths):
         return False
     python_removed_lines: List[str] = []
