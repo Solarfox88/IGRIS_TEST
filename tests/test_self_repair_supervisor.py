@@ -725,6 +725,55 @@ def test_local_backend_runs_reasoning_in_bounded_worker(monkeypatch, tmp_path):
     assert payload["initial_context"]["rank_test"] == "A"
 
 
+def test_subprocess_env_clean_passes_api_keys():
+    """forward_credentials=True must inject LLM provider credentials into the
+    clean subprocess env so ModelOrchestrator can reach cloud providers.
+    Without this, OpenAI/DeepSeek are skipped and Ollama is the only fallback."""
+    import os
+    from unittest.mock import patch
+
+    fake_env = {
+        "HOME": "/home/test",
+        "PATH": "/usr/bin",
+        "OPENAI_API_KEY": "sk-test-openai",
+        "DEEPSEEK_API_KEY": "sk-test-deepseek",
+        "ANTHROPIC_API_KEY": "sk-test-anthropic",
+        "IGRIS_API_HELPER_COMMAND": "/bin/true",
+        "IGRIS_EXECUTION_STRONG_MODEL": "gpt-4o",
+        "IGRIS_EXECUTION_FALLBACK_MODEL": "gpt-4o-mini",
+        "SOME_UNRELATED_VAR": "should-be-stripped",
+    }
+
+    with patch.dict(os.environ, fake_env, clear=True):
+        backend = LocalSupervisorBackend(project_root="/tmp")
+        env = backend._subprocess_env(clean_for_tests=True, forward_credentials=True)
+
+    assert env.get("OPENAI_API_KEY") == "sk-test-openai"
+    assert env.get("DEEPSEEK_API_KEY") == "sk-test-deepseek"
+    assert env.get("IGRIS_API_HELPER_COMMAND") == "/bin/true"
+    assert env.get("IGRIS_EXECUTION_STRONG_MODEL") == "gpt-4o"
+    assert "SOME_UNRELATED_VAR" not in env
+
+
+def test_subprocess_env_clean_without_forward_strips_api_keys():
+    """clean_for_tests=True without forward_credentials must NOT leak LLM keys
+    into test-isolated subprocesses (e.g. run_tests)."""
+    import os
+    from unittest.mock import patch
+
+    fake_env = {
+        "HOME": "/home/test",
+        "PATH": "/usr/bin",
+        "OPENAI_API_KEY": "sk-test-openai",
+    }
+
+    with patch.dict(os.environ, fake_env, clear=True):
+        backend = LocalSupervisorBackend(project_root="/tmp")
+        env = backend._subprocess_env(clean_for_tests=True)
+
+    assert "OPENAI_API_KEY" not in env
+
+
 def test_local_backend_rejects_bootstrap_smoke_payloads(monkeypatch, tmp_path):
     import igris.core.self_repair_supervisor as mod
 
