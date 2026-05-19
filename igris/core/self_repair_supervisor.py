@@ -418,17 +418,33 @@ class SupervisorBackend(Protocol):
 class LocalSupervisorBackend:
     """Governed local backend using fixed argv commands only."""
 
+    # LLM provider credentials forwarded to reasoning subprocesses when
+    # forward_credentials=True — allows ModelOrchestrator inside the worker
+    # to reach cloud providers instead of falling back to Ollama only.
+    _REASONING_CREDENTIAL_ALLOWLIST: frozenset = frozenset({
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "IGRIS_API_HELPER_COMMAND",
+        "IGRIS_API_HELPER_MODE",
+        "IGRIS_API_HELPER_PROVIDER",
+        "IGRIS_API_HELPER_MODEL",
+        "IGRIS_EXECUTION_STRONG_MODEL",
+        "IGRIS_EXECUTION_FALLBACK_MODEL",
+        "IGRIS_ENABLE_CODEX_DIRECT_EXECUTION",
+    })
+
     def __init__(self, project_root: str):
         self.project_root = Path(project_root)
 
-    def _subprocess_env(self, *, clean_for_tests: bool = False) -> Dict[str, str]:
+    def _subprocess_env(self, *, clean_for_tests: bool = False, forward_credentials: bool = False) -> Dict[str, str]:
         if not clean_for_tests:
             env = os.environ.copy()
             env["IGRIS_SUPERVISOR_CHILD"] = "1"
             env["PYTHONUNBUFFERED"] = "1"
             env.pop("PYTEST_CURRENT_TEST", None)
             return env
-        allowlist = {
+        allowlist: set = {
             "HOME",
             "LANG",
             "LC_ALL",
@@ -442,6 +458,8 @@ class LocalSupervisorBackend:
             "TZ",
             "USER",
         }
+        if forward_credentials:
+            allowlist = allowlist | LocalSupervisorBackend._REASONING_CREDENTIAL_ALLOWLIST
         env = {
             key: value
             for key, value in os.environ.items()
@@ -459,10 +477,11 @@ class LocalSupervisorBackend:
         *,
         input_text: Optional[str] = None,
         clean_env: bool = False,
+        forward_credentials: bool = False,
         extra_env: Optional[Dict[str, str]] = None,
     ) -> CommandResult:
         try:
-            env = self._subprocess_env(clean_for_tests=clean_env)
+            env = self._subprocess_env(clean_for_tests=clean_env, forward_credentials=forward_credentials)
             if extra_env:
                 env.update(extra_env)
             proc = subprocess.run(
@@ -634,6 +653,7 @@ class LocalSupervisorBackend:
             [str(self.project_root / ".venv/bin/python"), "-m", "igris.core.supervisor_reasoning_worker"],
             timeout=timeout,
             input_text=payload,
+            forward_credentials=True,
         )
         if result.success:
             try:

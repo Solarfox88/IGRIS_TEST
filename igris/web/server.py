@@ -2853,5 +2853,10 @@ def app() -> FastAPI:
 
 def run_app(application: FastAPI, host: str = "0.0.0.0", port: int = 7778) -> None:
     """Run the FastAPI application using Uvicorn."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env", override=False)
+    except ImportError:
+        pass
     import uvicorn
     uvicorn.run(application, host=host, port=port, log_level="info")
