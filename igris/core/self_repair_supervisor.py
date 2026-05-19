@@ -4917,6 +4917,11 @@ class SelfRepairSupervisor:
         "database migration", "data migration",
     })
 
+    # Maximum nesting level for auto-chained sub-missions.
+    # At this depth the policy must NOT create GitHub issues — doing so would
+    # produce orphaned issues that can never be auto-run.
+    _MAX_AUTOCHAIN_DEPTH: int = 2
+
     @staticmethod
     def _decomposition_policy(
         decomposition: Dict[str, Any],
@@ -4937,6 +4942,11 @@ class SelfRepairSupervisor:
 
         # Require explicit opt-in to autonomous sub-issue creation
         if not config.allow_auto_subissues or config.dry_run:
+            return "request_human_approval"
+
+        # At max autochain depth, do not create GitHub issues — they would be orphaned
+        # because _autorun_guards blocks execution at this depth anyway.
+        if config.autochain_depth >= SelfRepairSupervisor._MAX_AUTOCHAIN_DEPTH:
             return "request_human_approval"
 
         # Check for destructive/secret/dangerous content
@@ -5097,10 +5107,9 @@ class SelfRepairSupervisor:
             return False, "allow_auto_subissues=False"
         if config.dry_run:
             return False, "dry_run=True"
-        # Cascade depth guard: stop auto-chaining after 2 levels (parent→child→grandchild)
-        _MAX_AUTOCHAIN_DEPTH = 2
-        if config.autochain_depth >= _MAX_AUTOCHAIN_DEPTH:
-            return False, f"max_autochain_depth: depth={config.autochain_depth}>={_MAX_AUTOCHAIN_DEPTH}"
+        # Cascade depth guard: stop auto-chaining after _MAX_AUTOCHAIN_DEPTH levels
+        if config.autochain_depth >= SelfRepairSupervisor._MAX_AUTOCHAIN_DEPTH:
+            return False, f"max_autochain_depth: depth={config.autochain_depth}>={SelfRepairSupervisor._MAX_AUTOCHAIN_DEPTH}"
         if not created_urls:
             return False, "no_sub_issue_urls"
         approval = decomposition.get("approval_status", "")
