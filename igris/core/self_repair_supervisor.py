@@ -954,11 +954,13 @@ class LocalSupervisorBackend:
                 alt_cost_usd=alt_cost,
                 primary_latency_ms=primary_result.helper_primary_latency_ms,
                 alt_latency_ms=alt_latency_ms,
+                source="organic_run",
             )
             ab_path = str(os.getenv("IGRIS_HELPER_AB_RESULTS_PATH", ".igris/helper_ab_results.json"))
             save_ab_result(record, ab_path)
             all_records = load_ab_results(ab_path)
-            safe, _ = is_safe_to_switch(all_records)
+            sw_report = is_safe_to_switch(all_records)
+            safe = sw_report["safe_to_switch"]
 
             primary_result.helper_ab_shadow_mode = True
             primary_result.helper_primary_score = primary_score_r["total"]
