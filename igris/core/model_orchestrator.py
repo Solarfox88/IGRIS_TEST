@@ -678,7 +678,8 @@ class ModelOrchestrator:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 choices = data.get("choices", [])
-                content = choices[0]["message"]["content"] if choices else ""
+                msg = choices[0]["message"] if choices else {}
+                content = msg.get("content") or msg.get("reasoning_content", "")
                 usage = data.get("usage", {})
                 input_tokens = usage.get("prompt_tokens", 0)
                 output_tokens = usage.get("completion_tokens", 0)
