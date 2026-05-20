@@ -17,6 +17,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# Load .env so API keys are available to subprocess helper calls
+_dotenv_path = ROOT / ".env"
+if _dotenv_path.exists():
+    for _line in _dotenv_path.read_text().splitlines():
+        _line = _line.strip()
+        if not _line or _line.startswith("#") or "=" not in _line:
+            continue
+        _k, _, _v = _line.partition("=")
+        _k = _k.strip()
+        _v = _v.strip().strip('"').strip("'")
+        if _k and _k not in os.environ:  # don't override already-set vars
+            os.environ[_k] = _v
+
 from igris.core.helper_ab_eval import (
     make_ab_record, save_ab_result, load_ab_results,
     score_helper_response, is_safe_to_switch,
@@ -139,13 +152,15 @@ def run(out_path: str, dry_run: bool) -> int:
         primary_resp, primary_latency, primary_rc = _call_helper(packet, PRIMARY_MODEL)
         print(f" {primary_latency}ms", end="", flush=True)
 
-        # Call alt (DeepSeek)
+        # Call alt (DeepSeek) — clear IGRIS_API_HELPER_MODEL so _resolve_model
+        # doesn't forward the Codex model name to the DeepSeek endpoint.
         print(f"  → candidate...", end="", flush=True)
         alt_resp, alt_latency, alt_rc = _call_helper(
             packet, ALT_MODEL,
             extra_env={
                 "IGRIS_API_HELPER_MODE": "auto",
                 "IGRIS_API_HELPER_PROVIDER": ALT_PROVIDER,
+                "IGRIS_API_HELPER_MODEL": ALT_MODEL,
                 "IGRIS_HELPER_AB_ARM": "alt",
             },
         )

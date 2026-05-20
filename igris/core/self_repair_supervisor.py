@@ -920,6 +920,8 @@ class LocalSupervisorBackend:
             shadow_env = {
                 "IGRIS_API_HELPER_MODE": "auto",
                 "IGRIS_API_HELPER_PROVIDER": alt_provider,
+                # Override model so _resolve_model doesn't forward the Codex name to DeepSeek
+                "IGRIS_API_HELPER_MODEL": alt_model,
                 "IGRIS_HELPER_AB_ARM": "alt",
             }
             shadow_payload = _json.dumps({"model": alt_model, "max_tokens": max_tokens, "packet": packet})
