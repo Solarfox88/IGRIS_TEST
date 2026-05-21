@@ -274,7 +274,7 @@ async def _watchdog_loop(project_root: str) -> None:
                     await asyncio.get_event_loop().run_in_executor(
                         None,
                         lambda: __import__("subprocess").run(
-                            ["git", "clean", "-fd", "--", "igris", "tests", "docs"],
+                            ["git", "clean", "-fd", "--", "igris", "tests", "docs", "."],
                             capture_output=True, cwd=project_root,
                         )
                     )
