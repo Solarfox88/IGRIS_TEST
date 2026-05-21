@@ -60,7 +60,7 @@ else
   echo ""
   echo "!! You can try a different model:"
   echo "!!   ollama pull llama3.2"
-  echo "!! Then set LOCAL_LLM_MODEL=llama3.2 in .env"
+echo "!! Then set LOCAL_LLM_MODEL=phi4-mini in .env"
   echo ""
   echo "!! IGRIS_GPT will use deterministic fallback without a working model."
   exit 0

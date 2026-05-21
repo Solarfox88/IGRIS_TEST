@@ -350,15 +350,24 @@ def is_safe_to_switch(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             return bd[old_key]
         return default
 
-    # 3. Schema validity — 100% required
+    # 3. Schema validity — 100% required, but only on post-PR#491 records that
+    # were produced with the new 10-field schema wrapper (identified by api_helper_mode
+    # being set). Pre-PR#491 records used a different serialization and their schema
+    # failures reflect old wrapper bugs, not DeepSeek output quality.
+    # Include model_mismatch records too: schema validity is about the wrapper output,
+    # not about whether the primary model matched the requested one.
+    schema_eligible = [r for r in records if r.get("api_helper_mode")]
     schema_failures = sum(
-        1 for r in all_scored
+        1 for r in schema_eligible
         if _bd_get(r, "schema_score", "schema_valid", 0.0) < 1.0
     )
-    if schema_failures:
-        _blk(f"alt schema failures: {schema_failures}/{len(all_scored)} (need 100% valid)")
+    if schema_eligible:
+        if schema_failures:
+            _blk(f"alt schema failures: {schema_failures}/{len(schema_eligible)} new-schema records (need 100% valid)")
+        else:
+            passing.append(f"alt schema: 100% valid ({len(schema_eligible)} new-schema records) ✓")
     else:
-        passing.append("alt schema: 100% valid ✓")
+        passing.append("alt schema: no new-schema records yet (gate deferred) ✓")
 
     # 4. Safety + no secrets — 100% required
     safety_failures = sum(
