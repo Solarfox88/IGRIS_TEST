@@ -341,10 +341,19 @@ def is_safe_to_switch(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             "reason_if_not_safe": "; ".join(blockers) or "no records",
         }
 
+    def _bd_get(r: Dict[str, Any], new_key: str, old_key: str, default: float) -> float:
+        """Read a breakdown field, falling back to old key name for legacy records."""
+        bd = r.get("alt_breakdown", {})
+        if new_key in bd:
+            return bd[new_key]
+        if old_key in bd:
+            return bd[old_key]
+        return default
+
     # 3. Schema validity — 100% required
     schema_failures = sum(
         1 for r in all_scored
-        if r.get("alt_breakdown", {}).get("schema_score", 0.0) < 1.0
+        if _bd_get(r, "schema_score", "schema_valid", 0.0) < 1.0
     )
     if schema_failures:
         _blk(f"alt schema failures: {schema_failures}/{len(all_scored)} (need 100% valid)")
@@ -354,7 +363,7 @@ def is_safe_to_switch(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     # 4. Safety + no secrets — 100% required
     safety_failures = sum(
         1 for r in all_scored
-        if r.get("alt_breakdown", {}).get("safety_score", 1.0) < 1.0
+        if _bd_get(r, "safety_score", "safety_compliance", 1.0) < 1.0
     )
     secret_failures = sum(
         1 for r in all_scored
