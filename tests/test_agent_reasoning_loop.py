@@ -695,59 +695,37 @@ class TestPublicAPI:
 
 
 class TestBuildContextProfile:
-    """_build_context must use context budget matching the active model."""
+    """_build_context must pass context budget matching the active model."""
+
+    def _run_build(self, tmp_path, preferred_profile):
+        """Run _build_context and capture the profile kwarg passed to build_context."""
+        from igris.core.agent_reasoning_loop import AgentReasoningLoop
+        from unittest.mock import MagicMock, patch
+        loop = AgentReasoningLoop(project_root=str(tmp_path), preferred_profile=preferred_profile)
+        mock_ctx = MagicMock()
+        mock_ctx.build_context.return_value = MagicMock(
+            system_prompt="", user_message="", total_chars=0,
+            truncated_sections=[], token_budget_used=0, context_size_chars=0,
+        )
+        with patch("igris.core.agent_reasoning_loop.ContextManager", return_value=mock_ctx):
+            try:
+                loop._build_context("test goal", "mission-1")
+            except Exception:
+                pass
+        if mock_ctx.build_context.called:
+            _, kwargs = mock_ctx.build_context.call_args
+            return kwargs.get("profile")
+        return None
 
     def test_default_profile_uses_cloud(self, tmp_path):
-        from igris.core.agent_reasoning_loop import AgentReasoningLoop
-        loop = AgentReasoningLoop(project_root=str(tmp_path), preferred_profile=None)
-        captured = {}
-        def fake_build_context(goal, role, profile, **kw):
-            captured["profile"] = profile
-            return type("P", (), {"system_prompt": "", "user_message": "", "total_chars": 0,
-                                  "truncated_sections": [], "token_budget_used": 0,
-                                  "context_size_chars": 0})()
-        from igris.core.context_manager import ContextManager
-        from unittest.mock import patch
-        with patch.object(ContextManager, "build_context", fake_build_context):
-            try:
-                loop._build_context("test goal", "mission-1")
-            except Exception:
-                pass
-        assert captured.get("profile") == "cheap_cloud_reasoning"
+        assert self._run_build(tmp_path, None) == "cheap_cloud_reasoning"
 
     def test_mini_execution_uses_local_coder(self, tmp_path):
-        from igris.core.agent_reasoning_loop import AgentReasoningLoop
-        from unittest.mock import patch
-        from igris.core.context_manager import ContextManager
-        loop = AgentReasoningLoop(project_root=str(tmp_path), preferred_profile="mini_execution")
-        captured = {}
-        def fake_build_context(goal, role, profile, **kw):
-            captured["profile"] = profile
-            return type("P", (), {"system_prompt": "", "user_message": "", "total_chars": 0,
-                                  "truncated_sections": [], "token_budget_used": 0,
-                                  "context_size_chars": 0})()
-        with patch.object(ContextManager, "build_context", fake_build_context):
-            try:
-                loop._build_context("test goal", "mission-1")
-            except Exception:
-                pass
-        assert captured.get("profile") == "local_coder"
+        assert self._run_build(tmp_path, "mini_execution") == "local_coder"
+
+    def test_local_coder_uses_local_coder(self, tmp_path):
+        assert self._run_build(tmp_path, "local_coder") == "local_coder"
 
     def test_strong_execution_uses_cloud(self, tmp_path):
-        from igris.core.agent_reasoning_loop import AgentReasoningLoop
-        from unittest.mock import patch
-        from igris.core.context_manager import ContextManager
-        loop = AgentReasoningLoop(project_root=str(tmp_path), preferred_profile="strong_execution")
-        captured = {}
-        def fake_build_context(goal, role, profile, **kw):
-            captured["profile"] = profile
-            return type("P", (), {"system_prompt": "", "user_message": "", "total_chars": 0,
-                                  "truncated_sections": [], "token_budget_used": 0,
-                                  "context_size_chars": 0})()
-        with patch.object(ContextManager, "build_context", fake_build_context):
-            try:
-                loop._build_context("test goal", "mission-1")
-            except Exception:
-                pass
-        assert captured.get("profile") == "cheap_cloud_reasoning"
+        assert self._run_build(tmp_path, "strong_execution") == "cheap_cloud_reasoning"
 
