@@ -10,6 +10,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from igris.core.embedding_store import EmbeddingStore
+
 NODE_TYPES = {
     "identity_fact", "project_fact", "command_recipe", "lesson",
     "decision", "run_event", "capability", "environment_fact",
@@ -32,6 +34,7 @@ class MemoryGraph:
         mem_dir = self.project_root / ".igris" / "memory"
         mem_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = mem_dir / "graph.db"
+        self._db_path = self.db_path
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
@@ -414,3 +417,41 @@ CREATE INDEX IF NOT EXISTS idx_edges_dst  ON memory_edges(dst_node);
                     pairs += 1
             self.conn.commit()
         return pairs
+
+
+    def semantic_search(
+        self,
+        query: str,
+        top_k: int = 5,
+        node_type: Optional[str] = None,
+        embed_db_path: Optional[str] = None,
+    ) -> List[dict]:
+        """
+        Semantic search sui nodi del MemoryGraph via EmbeddingStore.
+        embed_db_path default: stessa dir di self._db_path con nome 'embeddings.db'
+        Ritorna lista [{"node_id", "node_type", "text_content", "score"}].
+        Se EmbeddingStore non ha risultati (DB vuoto o Ollama assente) ritorna [].
+        """
+        db_path = embed_db_path or str(Path(getattr(self, "_db_path", self.db_path)).with_name("embeddings.db"))
+        try:
+            store = EmbeddingStore(db_path)
+            return store.search(query=query, top_k=top_k, node_type=node_type)
+        except Exception:
+            return []
+
+    def index_node_for_search(
+        self,
+        node_id: str,
+        node_type: str,
+        text: str,
+        embed_db_path: Optional[str] = None,
+    ) -> bool:
+        """
+        Indicizza un nodo nell'EmbeddingStore. Ritorna True se indicizzato, False se Ollama assente.
+        """
+        db_path = embed_db_path or str(Path(getattr(self, "_db_path", self.db_path)).with_name("embeddings.db"))
+        try:
+            store = EmbeddingStore(db_path)
+            return store.upsert(node_id=node_id, node_type=node_type, text=text)
+        except Exception:
+            return False
