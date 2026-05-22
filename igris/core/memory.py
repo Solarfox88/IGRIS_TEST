@@ -1,84 +1,45 @@
-"""
-Simple memory management for IGRIS_GPT.
-
-This module provides helper functions to persist simple JSON data
-structures on disk under the `.igris/memory` directory of the
-project.  Namespaces are used to isolate different kinds of
-memory (e.g. chat sessions, task history, teacher messages).  The
-interface is intentionally minimal: read, write, append and list
-recent events.  More complex memory features (embedding storage,
-semantic search) can be layered on top of this basic mechanism in
-future iterations.
-
-"""
-
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-from igris.models.config import CONFIG
+from igris.core.memory_graph import MemoryGraph
 
+_graph_instance: MemoryGraph | None = None
 
-def _memory_base() -> Path:
-    """Return the base directory for memory storage.
-
-    The memory directory is located under `.igris/memory` relative to
-    the project root.  If it does not exist, it is created.
-    """
-    base = CONFIG.project_root / ".igris" / "memory"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
-
-def _namespace_path(namespace: str) -> Path:
-    """Return the path to the JSON file for a given namespace."""
-    return _memory_base() / f"{namespace}.json"
-
+def _get_graph() -> MemoryGraph:
+    global _graph_instance
+    if _graph_instance is None:
+        root = os.environ.get("PROJECT_ROOT", str(Path.cwd()))
+        _graph_instance = MemoryGraph(root)
+        _graph_instance.migrate_legacy(root)
+    return _graph_instance
 
 def read_memory(namespace: str) -> Any:
-    """Read a memory namespace from disk.
-
-    If the file does not exist, returns None.  Errors in reading or
-    parsing the file are propagated to the caller.
-    """
-    path = _namespace_path(namespace)
-    if not path.exists():
-        return None
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
+    for n in _get_graph().get_project_facts():
+        c = n.get("content", {})
+        if c.get("namespace") == namespace:
+            return c.get("data")
+    return None
 
 def write_memory(namespace: str, data: Any) -> None:
-    """Write an arbitrary JSON-serializable object to a namespace."""
-    path = _namespace_path(namespace)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-
+    g = _get_graph()
+    facts = g.get_project_facts()
+    for n in facts:
+        c = n.get("content", {})
+        if c.get("namespace") == namespace:
+            g.update_node(n["node_id"], content={"namespace": namespace, "data": data})
+            return
+    g.add_node("project_fact", {"namespace": namespace, "data": data})
 
 def append_memory_event(namespace: str, event: Dict[str, Any]) -> None:
-    """Append a single event (dict) to a namespace list.
-
-    If the namespace does not exist, it is created with a list containing
-    the event.  If the existing data is not a list, it is replaced.
-    """
-    existing = read_memory(namespace)
-    if not isinstance(existing, list):
-        existing = []
-    existing.append(event)
-    write_memory(namespace, existing)
-
+    _get_graph().add_node("run_event", {"namespace": namespace, **event})
 
 def recent_memory_events(namespace: str, limit: int = 20) -> List[Dict[str, Any]]:
-    """Return the most recent events from a namespace list.
-
-    :param namespace: The namespace to read.
-    :param limit: Maximum number of events to return (defaults to 20).
-    :returns: A list of events ordered from oldest to newest.
-    """
-    data = read_memory(namespace)
-    if not isinstance(data, list):
-        return []
-    return data[-limit:]
+    rows = _get_graph().query_by_intent(namespace, node_type="run_event", limit=200)
+    filtered = [r for r in rows if r.get("content", {}).get("namespace") == namespace]
+    # Take most recent N, return in ascending order (oldest first) — backward compat
+    recent = sorted(filtered, key=lambda x: x.get("created_at", 0), reverse=True)[:limit]
+    recent.sort(key=lambda x: x.get("created_at", 0))
+    return [{k: v for k, v in r["content"].items() if k != "namespace"} for r in recent]

@@ -89,6 +89,14 @@ def _append_event(event: DecisionEvent, project_root: Optional[str] = None) -> D
     events = _load_events(event.event_type, project_root)
     events.append(event)
     _save_events(event.event_type, events, project_root)
+    try:
+        from igris.core.memory_graph import MemoryGraph
+        root = project_root or str(CONFIG.project_root)
+        graph = MemoryGraph(root)
+        mapping = {"decision": "decision", "failure": "lesson", "saturation": "capability", "remediation": "run_event"}
+        graph.add_node(mapping.get(event.event_type, "run_event"), event.to_dict())
+    except Exception:
+        pass
     return event
 
 
@@ -158,7 +166,14 @@ def record_saturation(
         reason=redact_secrets(reason),
         context=context or {},
     )
-    return _append_event(event, project_root)
+    recorded = _append_event(event, project_root)
+    try:
+        from igris.core.memory_graph import MemoryGraph
+        root = project_root or str(CONFIG.project_root)
+        MemoryGraph(root).add_node("capability", {"family": family, "saturated": True})
+    except Exception:
+        pass
+    return recorded
 
 
 def record_remediation_attempt(

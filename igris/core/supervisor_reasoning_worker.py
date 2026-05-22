@@ -80,6 +80,12 @@ def main() -> int:
         initial_context=dict(payload.get("initial_context") or {}),
         step_callback=_write_progress,
     )
+    try:
+        from igris.core.memory_graph import MemoryGraph
+        _mg = MemoryGraph(project_root)
+        _mg.flush_session_memory(result.loop_id, getattr(loop, "_memory_items", []))
+    except Exception:
+        pass
 
     stop_event.set()
     if hb_thread:

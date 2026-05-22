@@ -54,6 +54,21 @@ def should_open_igris_issue(pattern_name: str, project_root: str) -> bool:
 
 async def teach_back(incident: Incident, project_root: str) -> None:
     record_incident(incident, project_root)
+    try:
+        from igris.core.memory_graph import MemoryGraph
+        graph = MemoryGraph(project_root)
+        graph.add_node(
+            "lesson",
+            content={
+                "pattern_name": incident.pattern_name,
+                "action_taken": ",".join(incident.actions_applied or []),
+                "failure_class": incident.pattern_name,
+                "resolution": getattr(incident, "resolution_summary", "") or "",
+            },
+            confidence=0.8,
+        )
+    except Exception:
+        pass
     if should_open_igris_issue(incident.pattern_name, project_root):
         title = f"feat(igris): handle {incident.pattern_name} autonomously"
         body = f"Pattern ripetuto: {incident.pattern_name}\n\nRoot cause: {incident.root_cause}\n\nEvidence:\n{incident.evidence}\n"

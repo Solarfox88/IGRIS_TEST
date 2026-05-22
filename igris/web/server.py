@@ -55,6 +55,7 @@ from igris.a2a.agent_card import build_agent_card
 from igris.a2a import task_store as a2a_store
 from igris.core.project_context import build_project_snapshot
 from igris.core.memory import recent_memory_events, append_memory_event
+from igris.core.memory_graph import MemoryGraph
 from igris.core import mission_planner
 from igris.core import decision_memory
 from igris.core import diagnostics as diagnostics_mod
@@ -424,6 +425,13 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(title="IGRIS_GPT", version="0.1.0", lifespan=_lifespan)
+    _graph_instance: Optional[MemoryGraph] = None
+    def _get_graph() -> MemoryGraph:
+        nonlocal _graph_instance
+        if _graph_instance is None:
+            _graph_instance = MemoryGraph(str(CONFIG.project_root))
+            _graph_instance.migrate_legacy(str(CONFIG.project_root))
+        return _graph_instance
 
     @app.get('/api/diagnostics/session-resume')
     async def session_resume():
@@ -1172,6 +1180,42 @@ def create_app() -> FastAPI:
     async def api_memory_lessons() -> Dict[str, object]:
         from igris.core import memory_analysis
         return memory_analysis.get_lessons_learned(project_root=str(CONFIG.project_root))
+
+    @app.get("/api/memory/summary")
+    async def api_memory_summary() -> Dict[str, object]:
+        g = _get_graph()
+        node_count = g.conn.execute("SELECT COUNT(*) FROM memory_nodes").fetchone()[0]
+        edge_count = g.conn.execute("SELECT COUNT(*) FROM memory_edges").fetchone()[0]
+        rows = g.conn.execute("SELECT node_type, COUNT(*) as c FROM memory_nodes GROUP BY node_type").fetchall()
+        migration_done = bool(g.conn.execute("SELECT 1 FROM memory_nodes WHERE node_type='environment_fact' AND content LIKE '%\"migration_done\"%' LIMIT 1").fetchone())
+        return {"node_count": node_count, "edge_count": edge_count, "node_types": {r[0]: r[1] for r in rows}, "migration_done": migration_done, "db_size_kb": round(g.db_path.stat().st_size / 1024.0, 2) if g.db_path.exists() else 0.0}
+
+    @app.get("/api/memory/search")
+    async def api_memory_search(q: str, node_type: Optional[str] = None, limit: int = 10) -> Dict[str, object]:
+        results = _get_graph().query_by_intent(q, node_type=node_type, limit=limit)
+        return {"results": results, "count": len(results)}
+
+    @app.post("/api/memory/record")
+    async def api_memory_record(request: Request) -> Dict[str, object]:
+        body = await request.json()
+        node_id = _get_graph().add_node(body["node_type"], body.get("content", {}), confidence=body.get("confidence", 1.0), tags=body.get("tags", []))
+        return {"node_id": node_id}
+
+    @app.post("/api/memory/learn-command")
+    async def api_memory_learn_command(request: Request) -> Dict[str, object]:
+        body = await request.json()
+        node_id = _get_graph().add_node("command_recipe", {"intent": body.get("intent", ""), "command": body.get("command", ""), "risk": body.get("risk", "low")}, success_rate=1.0 if body.get("success", True) else 0.0)
+        return {"node_id": node_id}
+
+    @app.post("/api/memory/export-safe")
+    async def api_memory_export_safe() -> StreamingResponse:
+        payload = json.dumps({"nodes": _get_graph().export_safe()}, indent=2).encode("utf-8")
+        return StreamingResponse(iter([payload]), media_type="application/json", headers={"Content-Disposition": "attachment; filename=memory_export_safe.json"})
+
+    @app.post("/api/memory/import-safe")
+    async def api_memory_import_safe(request: Request) -> Dict[str, object]:
+        body = await request.json()
+        return _get_graph().import_safe(body.get("nodes", []))
 
     @app.post("/api/memory/events")
     async def api_memory_record_event(request: Request) -> Dict[str, object]:

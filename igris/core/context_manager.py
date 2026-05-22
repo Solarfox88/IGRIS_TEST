@@ -334,7 +334,15 @@ class ContextManager:
             truncated.append("state_context")
 
         # 5. Memory context
-        memory_text = self._build_memory_context(memory_items or [])
+        graph_items = list(memory_items or [])
+        try:
+            from igris.core.memory_graph import MemoryGraph
+            mg = MemoryGraph(self.project_root)
+            graph_items.extend(mg.get_lessons_for_goal(goal, limit=5))
+            graph_items.extend(mg.query_by_intent(goal, node_type="project_fact", limit=3))
+        except Exception:
+            pass
+        memory_text = self._build_memory_context(graph_items)
         memory_budget = min(available // 4, 3000)
         packet.memory_context = self._fit(memory_text, memory_budget, "memory")
         available -= len(packet.memory_context)

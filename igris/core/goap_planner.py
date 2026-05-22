@@ -408,6 +408,20 @@ class GOAPPlanner:
             if not eligible:
                 # Fallback: use standard sequential plan
                 break
+            try:
+                import os
+                from igris.core.memory_graph import MemoryGraph
+                graph = MemoryGraph(os.environ.get("PROJECT_ROOT", "."))
+                for action in eligible:
+                    history = graph.get_action_history(
+                        goal_type=goal.get("type", ""),
+                        action_family=action.family,
+                    )
+                    failed_count = sum(1 for h in history if h.get("content", {}).get("outcome") == "failure")
+                    if failed_count >= 2:
+                        action.cost = action.cost * 1.5
+            except Exception:
+                pass
 
             # Score and select best action
             scored = sorted(eligible, key=lambda a: self._score_action(a, goal, current_state), reverse=True)
