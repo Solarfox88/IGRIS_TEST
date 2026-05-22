@@ -1,8 +1,11 @@
 """API tests for Agent Reasoning Loop endpoints — Epic #61."""
 
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 
+from igris.core.agent_reasoning_loop import LoopResult
 from igris.web.server import create_app
 
 
@@ -12,16 +15,25 @@ def client():
     return TestClient(app)
 
 
+def _fake_result(goal: str = "Test goal") -> LoopResult:
+    """Return a minimal LoopResult that satisfies to_dict()."""
+    return LoopResult(goal=goal, status="finished")
+
+
 @pytest.mark.slow
 class TestReasoningRunAPI:
-    """Test POST /api/reasoning/run — marked slow: makes real LLM calls via the API."""
+    """Test POST /api/reasoning/run — LLM call mocked; tests API contract only."""
 
     def test_run_basic(self, client):
-        resp = client.post("/api/reasoning/run", json={
-            "goal": "Test goal",
-            "max_steps": 2,
-            "role": "coder",
-        })
+        with patch(
+            "igris.core.agent_reasoning_loop.AgentReasoningLoop.run",
+            return_value=_fake_result("Test goal"),
+        ):
+            resp = client.post("/api/reasoning/run", json={
+                "goal": "Test goal",
+                "max_steps": 2,
+                "role": "coder",
+            })
         assert resp.status_code == 200
         data = resp.json()
         assert "loop_id" in data
@@ -30,21 +42,37 @@ class TestReasoningRunAPI:
         assert data["goal"] == "Test goal"
 
     def test_run_empty(self, client):
-        resp = client.post("/api/reasoning/run", json={"max_steps": 1})
+        with patch(
+            "igris.core.agent_reasoning_loop.AgentReasoningLoop.run",
+            return_value=_fake_result(""),
+        ):
+            resp = client.post("/api/reasoning/run", json={"max_steps": 1})
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data["total_steps"], int)
 
+    def test_run_invalid_initial_context(self, client):
+        """initial_context must be dict or str — list should return 400."""
+        resp = client.post("/api/reasoning/run", json={
+            "goal": "x",
+            "initial_context": [1, 2, 3],
+        })
+        assert resp.status_code == 400
+
 
 @pytest.mark.slow
 class TestReasoningStepAPI:
-    """Test POST /api/reasoning/step — marked slow: makes real LLM calls via the API."""
+    """Test POST /api/reasoning/step — LLM call mocked; tests API contract only."""
 
     def test_step_basic(self, client):
-        resp = client.post("/api/reasoning/step", json={
-            "goal": "Single step test",
-            "role": "researcher",
-        })
+        with patch(
+            "igris.core.agent_reasoning_loop.AgentReasoningLoop.run",
+            return_value=_fake_result("Single step test"),
+        ):
+            resp = client.post("/api/reasoning/step", json={
+                "goal": "Single step test",
+                "role": "researcher",
+            })
         assert resp.status_code == 200
         data = resp.json()
         assert data["total_steps"] <= 1
@@ -53,7 +81,7 @@ class TestReasoningStepAPI:
 
 @pytest.mark.slow
 class TestReasoningStopReasonsAPI:
-    """Test GET /api/reasoning/stop-reasons — marked slow: makes real LLM calls via the API."""
+    """Test GET /api/reasoning/stop-reasons — pure data, no LLM call."""
 
     def test_stop_reasons(self, client):
         resp = client.get("/api/reasoning/stop-reasons")

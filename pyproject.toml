@@ -29,6 +29,7 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
+addopts = "-m 'not slow'"
 markers = [
     "slow: integration tests that spawn subprocesses or external services (excluded from supervised baseline)",
 ]
