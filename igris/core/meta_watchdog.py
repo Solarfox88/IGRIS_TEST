@@ -31,7 +31,7 @@ async def _smw_loop(project_root: str) -> None:
                     continue
                 _SMW_COOLDOWN_PATTERNS[name] = detected.detected_at
                 d = diagnose(detected, project_root)
-                if d.needs_llm_help:
+                if d.requires_llm:
                     try:
                         d = await diagnose_with_llm(detected, snapshot, project_root)
                     except Exception as _llm_exc:

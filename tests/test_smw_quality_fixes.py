@@ -69,9 +69,9 @@ async def test_meta_watchdog_escalates_unknown_pattern_to_llm():
     detected = DetectedPattern(pattern=fake_pattern, snapshot=fake_snapshot, evidence="e", detected_at=0.0)
 
     static_diag = Diagnosis("totally_unknown_xyz", "pattern non riconosciuto", 0.4, 1,
-                             ["open_diagnostic_issue"], "e", True)
+                             ["open_diagnostic_issue"], "e", requires_llm=True)
     llm_diag = Diagnosis("totally_unknown_xyz", "llm root cause", 0.8, 2,
-                          ["open_diagnostic_issue"], "e", False)
+                          ["open_diagnostic_issue"], "e", requires_llm=False)
 
     with (
         patch("igris.core.meta_watchdog.take_snapshot", return_value=MagicMock()),
