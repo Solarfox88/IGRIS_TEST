@@ -132,8 +132,17 @@ _MEMORY_KEYWORDS = frozenset([
     "knowledge base", "long-term",
 ])
 _SECURITY_KEYWORDS = frozenset([
-    "secret", "api key", "credential", "auth", "jwt", "token",
-    "vulnerability", "injection", "xss", "csrf", "permission",
+    "secret", "api key", "credential", "jwt",
+    "vulnerability", "xss", "csrf",
+])
+# Whole-word / phrase matches for ambiguous terms:
+# - "auth"      would match "Authorization" in non-security titles
+# - "injection" would match Italian "dell'injection nel contesto" (LLM context)
+# - "token"     would match "token budget", "token count"
+_SECURITY_KEYWORDS_WHOLE_WORD = frozenset([
+    "auth token", "auth key", "api token", "access token",
+    "sql injection", "command injection", "prompt injection attack",
+    "permission denied", "privilege escalation",
 ])
 _DEVOPS_KEYWORDS = frozenset([
     "deploy", "restart", "ci ", "cd ", "docker", "kubernetes", "smoke",
@@ -142,6 +151,9 @@ _DEVOPS_KEYWORDS = frozenset([
 _EPIC_KEYWORDS = frozenset([
     "refactor", "rework", "rewrite", "architecture", "redesign",
     "epic", "system-wide", "overhaul",
+    "parallelism", "parallel agents", "multi-agent", "concurrent tasks",
+    "voice layer", "tts", "speech synthesis",
+    "interlocutor", "authorization model", "hierarchy",
 ])
 _REPAIR_KEYWORDS = frozenset([
     "fix", "repair", "debug", "diagnose", "broken", "failing", "error",
@@ -151,6 +163,12 @@ _REPAIR_KEYWORDS = frozenset([
 def _contains_any(text: str, keywords: frozenset) -> bool:
     t = text.lower()
     return any(kw in t for kw in keywords)
+
+
+def _contains_security(text: str) -> bool:
+    """Security check: substring for clear terms + phrase match for ambiguous ones."""
+    t = text.lower()
+    return _contains_any(t, _SECURITY_KEYWORDS) or _contains_any(t, _SECURITY_KEYWORDS_WHOLE_WORD)
 
 
 def _classify_goal(request: AssignmentRequest) -> Tuple[str, str, List[str]]:
@@ -179,7 +197,7 @@ def _classify_goal(request: AssignmentRequest) -> Tuple[str, str, List[str]]:
         return "backend_coder", "complex_implementation", reasons
 
     # Security / devops by risk or keywords
-    if request.risk_level in ("high", "very_high") or _contains_any(goal, _SECURITY_KEYWORDS):
+    if request.risk_level in ("high", "very_high") or _contains_security(goal):
         reasons.append("high risk or security keywords")
         return "security_reviewer", "security_review", reasons
 
@@ -192,10 +210,15 @@ def _classify_goal(request: AssignmentRequest) -> Tuple[str, str, List[str]]:
         reasons.append("memory system keywords")
         return "memory_architect", "memory_system", reasons
 
-    # Large epic / architecture
-    if _contains_any(goal, _EPIC_KEYWORDS) and len(goal) > 200:
-        reasons.append("large epic keywords + long goal")
+    # Large epic / architecture — triggered by keywords+length OR keywords+epic label
+    if _contains_any(goal, _EPIC_KEYWORDS) and (len(goal) > 200 or "epic" in labels):
+        reasons.append("large epic keywords + (long goal or epic label)")
         return "planner", "planning", reasons
+
+    # Epic label alone (no specific keyword match) → complex_implementation, not code_reasoning
+    if "epic" in labels:
+        reasons.append("epic label → complex_implementation")
+        return "backend_coder", "complex_implementation", reasons
 
     # Backend endpoint
     if _contains_any(goal, _BACKEND_KEYWORDS) or request.required_tests:
