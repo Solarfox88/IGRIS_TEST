@@ -340,6 +340,9 @@ class ContextManager:
             mg = MemoryGraph(self.project_root)
             graph_items.extend(mg.get_lessons_for_goal(goal, limit=5))
             graph_items.extend(mg.query_by_intent(goal, node_type="project_fact", limit=3))
+            recipe = mg.get_command_recipe(goal)
+            if recipe:
+                graph_items.append(recipe)
         except Exception:
             pass
         memory_text = self._build_memory_context(graph_items)

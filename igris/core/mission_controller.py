@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from igris.core.safety import redact_secrets
+from igris.core.work_session import DeliveryReport
 
 
 # ---------------------------------------------------------------------------
@@ -609,7 +610,24 @@ class MissionController:
                 "outcome_detail": redact_secrets(t.get("outcome_detail", "")),
             })
 
-        report["delivery_report"] = {"work_session_id": mission.work_session_id or "", "goal": mission.goal, "files_modified": file_artifacts, "diff_summary": "", "test_output": "", "ci_status": "unknown", "pr_url": "", "pr_number": 0, "healthcheck_url": "", "residual_risks": [], "rollback_available": bool(mission.rollback_plan), "run_id": mission.trace_id, "last_failure_class": "", "repair_cycles_used": 0, "capability_signals": {}}
+        from dataclasses import asdict as _asdict
+        report["delivery_report"] = _asdict(DeliveryReport(
+            work_session_id=mission.work_session_id or "",
+            goal=mission.goal,
+            files_modified=file_artifacts,
+            diff_summary="",
+            test_output="",
+            ci_status="unknown",
+            pr_url="",
+            pr_number=0,
+            healthcheck_url="",
+            residual_risks=[],
+            rollback_available=bool(mission.rollback_plan),
+            run_id=mission.trace_id,
+            last_failure_class="",
+            repair_cycles_used=0,
+            capability_signals={},
+        ))
 
         mission.final_report = report
         mission._touch()

@@ -34,7 +34,7 @@ class DeliveryWorkflow:
         full_body = body
         if closes_issues:
             full_body += "\n\n" + " ".join(f"Closes #{n}" for n in closes_issues)
-        result = subprocess.run(["gh", "pr", "create", "--title", title, "--body", full_body, "--head", branch], cwd=self.project_root, capture_output=True, text=True, check=True)
+        result = subprocess.run(["gh", "pr", "create", "--title", title, "--body", full_body, "--head", branch, "--base", "main"], cwd=self.project_root, capture_output=True, text=True, check=True)
         return result.stdout.strip()
 
     def wait_for_ci(self, pr_number: int, timeout: int = 600, poll: int = 30) -> CIStatus:
