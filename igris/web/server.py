@@ -80,6 +80,7 @@ _WATCHDOG_MAX_CONSECUTIVE_FAILURES = 3
 # Runs that confirm a structural ceiling are skipped after just 1 failure —
 # the strong model already exhausted its step budget, further runs waste budget.
 _WATCHDOG_CEILING_SKIP_AFTER = 1
+_WATCHDOG_ZOMBIE_TIMEOUT_SECONDS = 7200  # 2h no events → evict
 _REPAIR_ISSUE_PATTERNS = ("supervised repair for", "supervised repair:", "repair for reasoning", "repair for pytest")
 # Persisted skip list path — survives server restarts so IGRIS won't retry
 # a ceiling issue every time the service restarts after another run.
@@ -212,6 +213,20 @@ async def _watchdog_loop(project_root: str) -> None:
                                         _ar.run_id,
                                         int(_elapsed),
                                     )
+                                    if _elapsed > _WATCHDOG_ZOMBIE_TIMEOUT_SECONDS:
+                                        _watchdog_logger.warning(
+                                            "Watchdog: zombie run %s (%ds) — evicting from RUN_STORE",
+                                            _ar.run_id, int(_elapsed),
+                                        )
+                                        try:
+                                            _ar.status = "blocked"
+                                            _ar.blocked_reason = f"zombie_timeout_{int(_elapsed)}s"
+                                            _ar.failure_class = "zombie_timeout"
+                                            from igris.core.self_repair_supervisor import RUN_LOCK, RUN_STORE
+                                            with RUN_LOCK:
+                                                RUN_STORE.pop(_ar.run_id, None)
+                                        except Exception as _ze:
+                                            _watchdog_logger.warning("Watchdog: zombie eviction failed: %s", _ze)
                             except Exception:
                                 pass
             if not active:
