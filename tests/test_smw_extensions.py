@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import tempfile
 import time
+from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
 
 from igris.core.smw_pr_review import (
@@ -22,6 +24,12 @@ from igris.core.smw_weak_signals import (
     get_weak_signal_summary,
     run_all_detectors,
 )
+
+
+def _iso(delta_days: float = 0) -> str:
+    """Return ISO UTC timestamp offset by delta_days from now."""
+    dt = datetime.now(timezone.utc) - timedelta(days=delta_days)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _req(**kw):
@@ -100,8 +108,8 @@ def test_load_runs_returns_list():
     with tempfile.TemporaryDirectory() as td:
         os.makedirs(f"{td}/.igris", exist_ok=True)
         payload = {"runs": {
-            "r1": {"run_id": "r1", "created_at": "2026-05-01T00:00:00Z", "status": "done"},
-            "r2": {"run_id": "r2", "created_at": "2026-05-02T00:00:00Z", "status": "open"},
+            "r1": {"run_id": "r1", "created_at": _iso(2), "status": "done"},
+            "r2": {"run_id": "r2", "created_at": _iso(1), "status": "open"},
         }}
         with open(f"{td}/.igris/supervisor_runs.json", "w") as f:
             json.dump(payload, f)
@@ -113,8 +121,8 @@ def test_load_runs_sorted_ascending():
     with tempfile.TemporaryDirectory() as td:
         os.makedirs(f"{td}/.igris", exist_ok=True)
         payload = {"runs": {
-            "r2": {"run_id": "r2", "created_at": "2026-05-02T00:00:00Z"},
-            "r1": {"run_id": "r1", "created_at": "2026-05-01T00:00:00Z"},
+            "r2": {"run_id": "r2", "created_at": _iso(1)},
+            "r1": {"run_id": "r1", "created_at": _iso(2)},
         }}
         with open(f"{td}/.igris/supervisor_runs.json", "w") as f:
             json.dump(payload, f)
@@ -164,9 +172,11 @@ def test_detect_decomposition_uses_failure_class():
 
 
 def test_detect_cost_drift_uses_created_at():
+    # this_week: 1 day ago (value 5.0); prev_week: 10 days ago (value 1.0)
+    # a=5.0, b=1.0, b*1.3=1.3 → a > 1.3 → signal fires
     runs = [
-        {"created_at": "2026-05-22T12:00:00Z", "api_budget_used_usd": 5.0},
-        {"created_at": "2026-05-08T12:00:00Z", "api_budget_used_usd": 1.0},
+        {"created_at": _iso(1), "api_budget_used_usd": 5.0},
+        {"created_at": _iso(10), "api_budget_used_usd": 1.0},
     ]
     assert detect_cost_drift(runs) is not None
 
@@ -174,9 +184,9 @@ def test_detect_cost_drift_uses_created_at():
 def test_detect_fix_not_sticky_uses_branch():
     runs = [
         {"branch": "igris/mission-abc", "status": "done",
-         "updated_at": "2026-05-22T10:00:00Z", "created_at": "2026-05-22T10:00:00Z"},
+         "updated_at": _iso(0.1), "created_at": _iso(0.1)},
         {"branch": "igris/mission-abc", "status": "open",
-         "created_at": "2026-05-22T12:00:00Z"},
+         "created_at": _iso(0.05)},
     ]
     assert detect_fix_not_sticky(runs, ".") is not None
 
@@ -191,7 +201,7 @@ def test_run_all_detectors_with_supervisor_format():
         os.makedirs(f"{td}/.igris", exist_ok=True)
         payload = {"runs": {
             f"r{i}": {
-                "run_id": f"r{i}", "created_at": "2026-05-15T10:00:00Z",
+                "run_id": f"r{i}", "created_at": _iso(i + 1),
                 "status": "done", "failure_class": "", "api_budget_used_usd": 0.1,
                 "api_escalations_used": 0, "max_api_escalations_per_run": 3,
                 "repair_cycles_used": 1, "max_repair_cycles": 3,
