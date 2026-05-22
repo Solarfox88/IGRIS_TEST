@@ -1165,7 +1165,7 @@ def classify_failure(
             or "invalid syntax" in reasoning_text
         ):
             return "syntax_error"
-        if stop in {"reasoning_timeout", "budget_exceeded"}:
+        if stop in {"reasoning_timeout", "budget_exceeded", "no_diff_repair"}:
             return "reasoning_loop_blocked"
         if stop == "max_steps":
             return "max_steps"
@@ -3494,6 +3494,8 @@ class SelfRepairSupervisor:
                         "reasoning_timeout", "budget_exceeded", "blocked",
                     }:
                         self._record_capability_signal(run, "reasoning_timeout")
+                    if failure == "reasoning_loop_blocked" and stop_reason == "no_diff_repair":
+                        self._record_capability_signal(run, "no_diff_repair")
             # Record pytest_hang when the full test subprocess was killed for
             # producing no output (idle timeout) — repeated hangs indicate the
             # model's change consistently breaks the test suite in a way it
