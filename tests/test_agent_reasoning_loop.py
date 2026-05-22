@@ -336,12 +336,23 @@ class TestRankTaskTestCreationPolicy:
 # Run — LLM unavailable (deterministic fallback)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.slow
+def _fast_finish_rl(*a, **k):
+    """Mock LLM that returns finish immediately — avoids 30s Ollama timeout."""
+    import json
+    from igris.core.model_orchestrator import OrchestratorResult
+    return OrchestratorResult(
+        success=True,
+        text=json.dumps({"action_type": "finish", "reason": "mocked", "mode": "coder",
+                         "parameters": {"summary": "done"}, "risk_hint": "low", "confidence": 0.9}),
+        provider="mock",
+        model="mock",
+    )
+
+
 class TestRunDeterministic:
-    """Test loop run behaviour — marked slow: makes real LLM calls when providers are configured."""
+    """Test loop run behaviour — all LLM calls mocked, runs in < 1s."""
 
     def test_run_blocks_without_llm(self):
-        from unittest.mock import patch
         from igris.core.model_orchestrator import OrchestratorResult
         # Mock out the orchestrator so no real LLM calls are made.
         # This test is about the no-LLM code path only.
@@ -363,21 +374,24 @@ class TestRunDeterministic:
         assert isinstance(result.to_dict(), dict)
 
     def test_run_tracks_goal(self):
-        loop = AgentReasoningLoop(project_root="/tmp", max_steps=1)
-        result = loop.run(goal="Add /api/ping")
+        with patch("igris.core.model_orchestrator.ModelOrchestrator.complete", side_effect=_fast_finish_rl):
+            loop = AgentReasoningLoop(project_root="/tmp", max_steps=1)
+            result = loop.run(goal="Add /api/ping")
         assert result.goal == "Add /api/ping"
 
     def test_run_with_initial_context(self):
-        loop = AgentReasoningLoop(project_root="/tmp", max_steps=1)
-        result = loop.run(
-            goal="check status",
-            initial_context={"repo_clean": True},
-        )
+        with patch("igris.core.model_orchestrator.ModelOrchestrator.complete", side_effect=_fast_finish_rl):
+            loop = AgentReasoningLoop(project_root="/tmp", max_steps=1)
+            result = loop.run(
+                goal="check status",
+                initial_context={"repo_clean": True},
+            )
         assert loop._world_state.get("repo_clean") is True
 
     def test_run_produces_summary(self):
-        loop = AgentReasoningLoop(project_root="/tmp", max_steps=1)
-        result = loop.run(goal="test")
+        with patch("igris.core.model_orchestrator.ModelOrchestrator.complete", side_effect=_fast_finish_rl):
+            loop = AgentReasoningLoop(project_root="/tmp", max_steps=1)
+            result = loop.run(goal="test")
         assert result.final_summary != ""
         assert "Loop" in result.final_summary
 
