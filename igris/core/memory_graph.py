@@ -320,3 +320,97 @@ CREATE INDEX IF NOT EXISTS idx_edges_dst  ON memory_edges(dst_node);
                 imported += 1
             self.conn.commit()
         return {"imported": imported, "skipped": skipped}
+
+    def decay_confidence(self, max_age_days: float = 30.0, half_life_days: float = 14.0) -> int:
+        import math
+
+        now = time.time()
+        cutoff = now - (max_age_days / 10) * 86400
+        rows = self.conn.execute(
+            "SELECT node_id, confidence, created_at FROM memory_nodes "
+            "WHERE node_type IN ('lesson','world_state_snapshot') AND created_at < ?",
+            (cutoff,),
+        ).fetchall()
+        updated = 0
+        with self._lock:
+            for row in rows:
+                age_days = (now - float(row["created_at"])) / 86400
+                conf = float(row["confidence"])
+                new_conf = max(0.05, conf * math.exp(-math.log(2) * age_days / half_life_days))
+                if abs(new_conf - conf) > 0.001:
+                    self.conn.execute(
+                        "UPDATE memory_nodes SET confidence=?, updated_at=? WHERE node_id=?",
+                        (new_conf, now, row["node_id"]),
+                    )
+                    updated += 1
+            self.conn.commit()
+        return updated
+
+    def deprecate_stale_lessons(self, project_root: str) -> int:
+        now = time.time()
+        rows = self.conn.execute(
+            "SELECT node_id, content, confidence, tags FROM memory_nodes "
+            "WHERE node_type = 'lesson' AND confidence > 0.1"
+        ).fetchall()
+        marked = 0
+        with self._lock:
+            for row in rows:
+                try:
+                    content = json.loads(row["content"])
+                    tags = json.loads(row["tags"] or "[]")
+                except Exception:
+                    continue
+                if "stale" in tags:
+                    continue
+                files = content.get("files_modified", [])
+                if not files:
+                    continue
+                missing = [f for f in files if not os.path.exists(os.path.join(project_root, f))]
+                if missing:
+                    conf = float(row["confidence"])
+                    new_conf = max(0.05, conf * 0.3)
+                    new_tags = list(set(tags + ["stale"]))
+                    self.conn.execute(
+                        "UPDATE memory_nodes SET confidence=?, tags=?, updated_at=? WHERE node_id=?",
+                        (new_conf, json.dumps(new_tags), now, row["node_id"]),
+                    )
+                    marked += 1
+            self.conn.commit()
+        return marked
+
+    def detect_and_mark_contradictions(self, window_nodes: int = 100) -> int:
+        now = time.time()
+        rows = self.conn.execute(
+            "SELECT node_id, content, confidence, tags FROM memory_nodes "
+            "WHERE node_type = 'lesson' ORDER BY created_at DESC LIMIT ?",
+            (window_nodes,),
+        ).fetchall()
+        by_goal: Dict[str, List[tuple[str, str, float, List[str]]]] = {}
+        for row in rows:
+            try:
+                content = json.loads(row["content"])
+                tags = json.loads(row["tags"] or "[]")
+            except Exception:
+                continue
+            goal_key = str(content.get("goal") or "")[:50]
+            outcome = str(content.get("outcome") or "")
+            if goal_key:
+                by_goal.setdefault(goal_key, []).append((row["node_id"], outcome, float(row["confidence"]), tags))
+
+        pairs = 0
+        with self._lock:
+            for _, nodes in by_goal.items():
+                successes = [(nid, c, t) for nid, o, c, t in nodes if o == "success"]
+                failures = [(nid, c, t) for nid, o, c, t in nodes if o == "failure"]
+                if successes and failures:
+                    for nid, conf, tags in successes + failures:
+                        if "contradicted" not in tags:
+                            new_conf = max(0.05, conf * 0.6)
+                            new_tags = list(set(tags + ["contradicted"]))
+                            self.conn.execute(
+                                "UPDATE memory_nodes SET confidence=?, tags=?, updated_at=? WHERE node_id=?",
+                                (new_conf, json.dumps(new_tags), now, nid),
+                            )
+                    pairs += 1
+            self.conn.commit()
+        return pairs

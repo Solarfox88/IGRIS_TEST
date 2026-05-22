@@ -59,18 +59,71 @@ def test_fix_ci_loop_success_writes_lesson(tmp_path):
         mg.return_value.add_node.assert_called()
 
 
+def test_fix_ci_loop_returns_true_on_green(tmp_path):
+    dw = DeliveryWorkflow(str(tmp_path))
+    with patch.object(dw, "wait_for_ci", return_value=CIStatus("green", [], "")):
+        assert dw.fix_ci_loop(12) is True
+
+
+def test_fix_ci_loop_calls_diagnose_on_red(tmp_path):
+    dw = DeliveryWorkflow(str(tmp_path))
+    with patch.object(dw, "wait_for_ci", return_value=CIStatus("red", ["ci"], "")), patch.object(dw, "_diagnose_ci_failure", return_value=None) as diag:
+        assert dw.fix_ci_loop(12, max_attempts=1) is False
+        diag.assert_called_once()
+
+
+def test_diagnose_ci_failure_classifies_lint(tmp_path):
+    dw = DeliveryWorkflow(str(tmp_path))
+    with patch("igris.core.delivery_workflow.subprocess.run", side_effect=[_cp(0, '[{"databaseId": 1}]'), _cp(0, "ruff found issues")]):
+        diagnosis = dw._diagnose_ci_failure(1, ["ci"])
+    assert diagnosis["failure_type"] == "lint_error"
+
+
+def test_diagnose_ci_failure_classifies_test(tmp_path):
+    dw = DeliveryWorkflow(str(tmp_path))
+    with patch("igris.core.delivery_workflow.subprocess.run", side_effect=[_cp(0, '[{"databaseId": 1}]'), _cp(0, "AssertionError: bad")]):
+        diagnosis = dw._diagnose_ci_failure(1, ["ci"])
+    assert diagnosis["failure_type"] == "test_failure"
+
+
+def test_apply_ci_fix_lint_runs_ruff(tmp_path):
+    dw = DeliveryWorkflow(str(tmp_path))
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(args[0])
+        return _cp(0, "")
+
+    with patch("igris.core.delivery_workflow.subprocess.run", side_effect=fake_run):
+        assert dw._apply_ci_fix({"failure_type": "lint_error"}) is True
+    assert ["python", "-m", "ruff", "check", "--fix", "."] in calls
+
+
+def test_push_fix_commit_skips_if_nothing_staged(tmp_path):
+    dw = DeliveryWorkflow(str(tmp_path))
+    with patch("igris.core.delivery_workflow.subprocess.run", return_value=_cp(0, "")):
+        assert dw._push_fix_commit("m") is False
+
+
+def test_fix_ci_loop_max_attempts_respected(tmp_path):
+    dw = DeliveryWorkflow(str(tmp_path))
+    with patch.object(dw, "wait_for_ci", return_value=CIStatus("red", ["x"], "")) as wait, patch.object(dw, "_diagnose_ci_failure", return_value={"failure_type": "unknown"}), patch.object(dw, "_apply_ci_fix", return_value=True), patch.object(dw, "_push_fix_commit", return_value=True):
+        dw.fix_ci_loop(3, max_attempts=3)
+    assert wait.call_count == 3
+
+
 def test_fix_ci_loop_failure_runs_detectors(tmp_path):
     dw=DeliveryWorkflow(str(tmp_path))
-    with patch.object(dw,"wait_for_ci",return_value=CIStatus("red",["x"],"")), patch("igris.core.smw_weak_signals.run_all_detectors", return_value={}) as r, patch("igris.core.smw_weak_signals.save_weak_signals"):
+    with patch.object(dw,"wait_for_ci",return_value=CIStatus("red",["x"],"")), patch.object(dw, "_diagnose_ci_failure", return_value=None), patch("igris.core.smw_weak_signals.run_all_detectors", return_value={}) as r, patch("igris.core.smw_weak_signals.save_weak_signals"):
         assert dw.fix_ci_loop(1,max_attempts=1) is False
         r.assert_called_once()
 
 
 def test_fix_ci_loop_anti_repeat(tmp_path):
     dw=DeliveryWorkflow(str(tmp_path))
-    with patch.object(dw,"wait_for_ci",return_value=CIStatus("red",["x"],"")):
+    with patch.object(dw,"wait_for_ci",return_value=CIStatus("red",["x"],"")), patch.object(dw, "_diagnose_ci_failure", return_value=None):
         dw.fix_ci_loop(3,max_attempts=1)
-        assert dw._fix_attempts["3"]==1
+        assert dw._fix_attempts == {}
 
 
 def test_verify_and_unsaturate_calls_graph(tmp_path):

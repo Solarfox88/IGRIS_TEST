@@ -4,7 +4,7 @@ import json
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -58,28 +58,122 @@ class DeliveryWorkflow:
         return CIStatus("timeout", [], "")
 
     def fix_ci_loop(self, pr_number: int, max_attempts: int = 3) -> bool:
-        key = str(pr_number)
         for attempt in range(max_attempts):
             ci = self.wait_for_ci(pr_number)
             if ci.status == "green":
-                try:
-                    from igris.core.memory_graph import MemoryGraph
-                    MemoryGraph(self.project_root).add_node("lesson", {"event_type": "ci_fix_success", "pr_number": pr_number, "attempts": attempt + 1, "failed_jobs": ci.failed_jobs})
-                except Exception:
-                    pass
+                self._record_ci_fix_success(pr_number, attempt + 1, ci.failed_jobs)
                 return True
             if ci.status != "red":
                 break
-            self._fix_attempts[key] = self._fix_attempts.get(key, 0) + 1
-            if self._fix_attempts[key] > max_attempts:
+
+            diagnosis = self._diagnose_ci_failure(pr_number, ci.failed_jobs)
+            if not diagnosis:
                 break
+            fixed = self._apply_ci_fix(diagnosis)
+            if not fixed:
+                break
+            push_ok = self._push_fix_commit(f"fix(ci): repair {', '.join(ci.failed_jobs[:3])} [attempt {attempt + 1}]")
+            if not push_ok:
+                break
+
+        self._record_weak_signals()
+        return False
+
+    def _record_ci_fix_success(self, pr_number: int, attempts: int, failed_jobs: List[str]) -> None:
+        try:
+            from igris.core.memory_graph import MemoryGraph
+
+            MemoryGraph(self.project_root).add_node(
+                "lesson",
+                {"event_type": "ci_fix_success", "pr_number": pr_number, "attempts": attempts, "failed_jobs": failed_jobs},
+            )
+        except Exception:
+            pass
+
+    def _record_weak_signals(self) -> None:
         try:
             from igris.core.smw_weak_signals import run_all_detectors, save_weak_signals
+
             signals = run_all_detectors(self.project_root)
             save_weak_signals(signals, self.project_root)
         except Exception:
             pass
+
+    def _diagnose_ci_failure(self, pr_number: int, failed_jobs: List[str]) -> Optional[dict]:
+        result = subprocess.run(
+            ["gh", "run", "list", "--json", "databaseId,status,conclusion,name", "--pr", str(pr_number), "--limit", "1"],
+            cwd=self.project_root,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+        runs = json.loads(result.stdout or "[]")
+        if not runs:
+            return None
+        run_id = runs[0].get("databaseId")
+        if not run_id:
+            return None
+        log_result = subprocess.run(
+            ["gh", "run", "view", str(run_id), "--log-failed"],
+            cwd=self.project_root,
+            capture_output=True,
+            text=True,
+        )
+        log_text = log_result.stdout[:6000] if log_result.returncode == 0 else ""
+        if not log_text:
+            return None
+        failure_type = "unknown"
+        if "ImportError" in log_text or "ModuleNotFoundError" in log_text:
+            failure_type = "import_error"
+        elif "FAILED tests/" in log_text or "AssertionError" in log_text:
+            failure_type = "test_failure"
+        elif "SyntaxError" in log_text:
+            failure_type = "syntax_error"
+        elif "ruff" in log_text.lower() or "flake8" in log_text.lower():
+            failure_type = "lint_error"
+        return {"run_id": run_id, "failed_jobs": failed_jobs, "failure_type": failure_type, "log_excerpt": log_text}
+
+    def _apply_ci_fix(self, diagnosis: dict) -> bool:
+        failure_type = diagnosis.get("failure_type", "unknown")
+        if failure_type == "lint_error":
+            result = subprocess.run(
+                ["python", "-m", "ruff", "check", "--fix", "."],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(["git", "add", "-u"], cwd=self.project_root, capture_output=True)
+            return result.returncode == 0
+        if failure_type == "test_failure":
+            try:
+                from igris.core.memory_graph import MemoryGraph
+
+                MemoryGraph(self.project_root).add_node(
+                    "lesson",
+                    {
+                        "event_type": "ci_test_failure_needs_llm",
+                        "log_excerpt": str(diagnosis.get("log_excerpt", ""))[:1000],
+                        "failed_jobs": diagnosis.get("failed_jobs", []),
+                    },
+                    confidence=0.7,
+                )
+            except Exception:
+                pass
+            return False
         return False
+
+    def _push_fix_commit(self, message: str) -> bool:
+        status = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"], cwd=self.project_root, capture_output=True, text=True
+        )
+        if not status.stdout.strip():
+            return False
+        commit = subprocess.run(["git", "commit", "-m", message], cwd=self.project_root, capture_output=True, text=True)
+        if commit.returncode != 0:
+            return False
+        push = subprocess.run(["git", "push"], cwd=self.project_root, capture_output=True, text=True)
+        return push.returncode == 0
 
     def update_issue(self, issue_number: int, comment: str) -> bool:
         result = subprocess.run(["gh", "issue", "comment", str(issue_number), "--body", comment], cwd=self.project_root, capture_output=True, text=True)

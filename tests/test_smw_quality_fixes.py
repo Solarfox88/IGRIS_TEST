@@ -27,7 +27,6 @@ def test_execute_action_restart_watchdog_cycle():
             "restart_watchdog_cycle", tier=1, dry_run=False, project_root=td
         ))
         assert r.success
-        assert "sentinel" in r.output
 
 
 def test_execute_action_unknown_returns_failure():

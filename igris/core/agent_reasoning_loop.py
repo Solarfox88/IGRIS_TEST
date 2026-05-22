@@ -138,6 +138,13 @@ class LoopResult:
     failed_steps: int = 0
     total_duration_ms: int = 0
     files_modified: List[str] = field(default_factory=list)
+    diff_summary: str = ""
+    test_output: str = ""
+    ci_status: str = ""
+    pr_url: str = ""
+    pr_number: int = 0
+    residual_risks: List[str] = field(default_factory=list)
+    rollback_available: bool = False
     errors: List[str] = field(default_factory=list)
     final_summary: str = ""
     # Orchestrator observability
@@ -160,6 +167,13 @@ class LoopResult:
             "failed_steps": self.failed_steps,
             "total_duration_ms": self.total_duration_ms,
             "files_modified": self.files_modified,
+            "diff_summary": redact_secrets(self.diff_summary),
+            "test_output": redact_secrets(self.test_output),
+            "ci_status": self.ci_status,
+            "pr_url": self.pr_url,
+            "pr_number": self.pr_number,
+            "residual_risks": [redact_secrets(r) for r in self.residual_risks],
+            "rollback_available": self.rollback_available,
             "errors": [redact_secrets(e) for e in self.errors],
             "final_summary": redact_secrets(self.final_summary),
             "reasoning_execution_provider": self.reasoning_execution_provider,
