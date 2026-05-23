@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from igris.core.safety import redact_secrets
+from igris.core.tool_result_budget import apply_tool_result_budget, DEFAULT_BUDGET_BYTES
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +214,7 @@ class AgentReasoningLoop:
         role: str = "coder",
         task_type: str = "code_reasoning",
         preferred_profile: Optional[str] = None,
+        tool_result_budget: int = DEFAULT_BUDGET_BYTES,
     ):
         import os
         self.project_root = project_root or os.environ.get("PROJECT_ROOT", ".")
@@ -222,6 +224,7 @@ class AgentReasoningLoop:
         self.role = role
         self.task_type = task_type
         self.preferred_profile = preferred_profile
+        self.tool_result_budget = tool_result_budget
 
         # State
         self._steps: List[LoopStep] = []
@@ -467,6 +470,21 @@ class AgentReasoningLoop:
     # Tool result storage
     # ------------------------------------------------------------------
 
+    def _context_config(self) -> dict:
+        """Load optional runtime config from .igris/context_config.json."""
+        import json
+        import pathlib
+        p = pathlib.Path(self.project_root or ".") / ".igris" / "context_config.json"
+        try:
+            return json.loads(p.read_text()) if p.exists() else {}
+        except Exception:
+            return {}
+
+    def _tool_result_budget_bytes(self) -> int:
+        """Return the configured tool result budget in bytes (0 = disabled)."""
+        cfg = self._context_config()
+        return int(cfg.get("tool_result_budget_bytes", self.tool_result_budget))
+
     def _store_tool_result(
         self,
         action_type: str,
@@ -595,9 +613,18 @@ class AgentReasoningLoop:
             step.outcome = "success" if exec_result.get("success", False) else "failure"
             step.result_summary = exec_result.get("summary", "")
 
-            # 4b. Store structured result data
+            # 4b. Store structured result data (apply 16KB byte-cap before injection)
             result_data = exec_result.get("result_data")
             if result_data is not None:
+                if isinstance(result_data, str):
+                    _budget = self._tool_result_budget_bytes()
+                    result_data, _bout = apply_tool_result_budget(result_data, _budget)
+                    if _bout.truncated:
+                        import logging as _logging
+                        _logging.getLogger(__name__).debug(
+                            "tool_result_budget: truncated %d → %d bytes for %s",
+                            _bout.original_bytes, _bout.final_bytes, action.action_type,
+                        )
                 step.result_data = result_data
                 self._store_tool_result(action.action_type, result_data)
 
