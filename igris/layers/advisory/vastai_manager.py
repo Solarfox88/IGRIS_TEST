@@ -1,4 +1,4 @@
-"""Vast.ai Manager — gated, mock-safe, no real API calls in CI.
+"""Vast.ai Manager — gated, live API when key present.
 
 Manages GPU instance lifecycle for DeepSeek R1 inference.
 All destructive operations (provision, destroy, set-mode) require
@@ -15,7 +15,10 @@ Config defaults:
 
 from __future__ import annotations
 
+import json
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -53,6 +56,46 @@ SUPPORTED_MODELS = {
 }
 
 VALID_MODES = {"on_demand", "always_on", "disabled"}
+
+VASTAI_API_BASE = "https://console.vast.ai/api/v0"
+
+
+# ---------------------------------------------------------------------------
+# Internal HTTP helper
+# ---------------------------------------------------------------------------
+
+def _vastai_request(
+    method: str,
+    path: str,
+    api_key: str,
+    payload: Optional[Dict[str, Any]] = None,
+    timeout: int = 20,
+) -> Dict[str, Any]:
+    """Make a Vast.ai REST API call. Returns parsed JSON or raises on error."""
+    url = f"{VASTAI_API_BASE}{path}"
+    data = json.dumps(payload).encode() if payload else None
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode()[:200]
+        except Exception:
+            pass
+        raise RuntimeError(f"Vast.ai API {method} {path} → HTTP {e.code}: {body}") from e
+    except Exception as e:
+        raise RuntimeError(f"Vast.ai API {method} {path} error: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -196,55 +239,46 @@ class VastAIManager:
         model: Optional[str] = None,
         max_cost: Optional[float] = None,
     ) -> OfferResult:
-        """Search for GPU offers (mock — no real API calls)."""
+        """Search for GPU offers — real API call when key is present, mock otherwise."""
         cfg = CONFIG.vastai
         model = model or cfg.model
         max_cost = max_cost or cfg.max_hourly_cost
         info = SUPPORTED_MODELS.get(model)
 
         if not info:
-            return OfferResult(
-                model=model,
-                error=f"Unknown model: {model}",
-            )
+            return OfferResult(model=model, error=f"Unknown model: {model}")
 
         if not cfg.api_key:
+            return OfferResult(model=model, error="VASTAI_API_KEY not configured")
+
+        vram_mb = info["vram_gb"] * 1024  # Vast.ai uses MB
+        try:
+            data = _vastai_request("GET", "/bundles/", cfg.api_key)
+            raw_offers = data.get("offers", [])
+            offers = []
+            for o in raw_offers:
+                gpu_ram_mb = o.get("gpu_ram", 0)
+                dph = o.get("dph_total", 999)
+                if gpu_ram_mb >= vram_mb and dph <= max_cost:
+                    offers.append({
+                        "id": o.get("id"),
+                        "gpu": o.get("gpu_name", "?"),
+                        "vram_gb": round(gpu_ram_mb / 1024, 1),
+                        "cost_per_hour": round(dph, 4),
+                        "num_gpus": o.get("num_gpus", 1),
+                        "cuda": o.get("cuda_max_good", "?"),
+                        "region": o.get("geolocation", "?"),
+                        "available": True,
+                    })
+            offers.sort(key=lambda x: x["cost_per_hour"])
             return OfferResult(
+                offers=offers[:10],
                 model=model,
-                error="VASTAI_API_KEY not configured",
+                min_vram_gb=info["vram_gb"],
+                max_cost_hr=max_cost,
             )
-
-        # Mock offers (no real API call)
-        mock_offers = [
-            {
-                "id": "mock-offer-001",
-                "gpu": info["min_gpu"],
-                "vram_gb": info["vram_gb"],
-                "cost_per_hour": info["estimated_cost_hr"],
-                "region": "us-east",
-                "available": True,
-                "note": "MOCK — no real Vast.ai API call made",
-            },
-            {
-                "id": "mock-offer-002",
-                "gpu": info["min_gpu"],
-                "vram_gb": info["vram_gb"],
-                "cost_per_hour": round(info["estimated_cost_hr"] * 0.9, 4),
-                "region": "eu-west",
-                "available": True,
-                "note": "MOCK — no real Vast.ai API call made",
-            },
-        ]
-
-        # Filter by budget
-        offers = [o for o in mock_offers if o["cost_per_hour"] <= max_cost]
-
-        return OfferResult(
-            offers=offers,
-            model=model,
-            min_vram_gb=info["vram_gb"],
-            max_cost_hr=max_cost,
-        )
+        except Exception as e:
+            return OfferResult(model=model, error=str(e))
 
     # -- Provision (gated) --
 
@@ -310,31 +344,57 @@ class VastAIManager:
                 "gated": True,
             }
 
-        # Mock provision (no real API call)
-        instance = VastInstance(
-            instance_id=f"mock-{int(time.time())}",
-            status="provisioning",
-            model=model,
-            gpu=SUPPORTED_MODELS.get(model, {}).get("min_gpu", "unknown"),
-            cost_per_hour=SUPPORTED_MODELS.get(model, {}).get("estimated_cost_hr", 0.0),
-            created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            region="mock-region",
-        )
-        self._instance = instance
-        self._provision_history.append({
-            "action": "provision",
-            "instance_id": instance.instance_id,
-            "model": model,
-            "timestamp": instance.created_at,
-            "mock": True,
-        })
+        # Real provision via Vast.ai API
+        try:
+            # Find best offer if not specified
+            if not offer_id:
+                result = self.search_offers(model=model, max_cost=cfg.max_hourly_cost)
+                if result.error or not result.offers:
+                    return {
+                        "success": False,
+                        "error": result.error or "No suitable offers found",
+                        "gated": True,
+                    }
+                offer_id = result.offers[0]["id"]
 
-        return {
-            "success": True,
-            "instance": instance.to_dict(),
-            "note": "MOCK — no real Vast.ai instance created. No costs incurred.",
-            "gated": True,
-        }
+            # Rent the instance (Vast.ai: PUT /asks/<id>/)
+            resp = _vastai_request(
+                "PUT",
+                f"/asks/{offer_id}/",
+                cfg.api_key,
+                payload={
+                    "client_id": "me",
+                    "image": "pytorch/pytorch:latest",
+                    "runtype": "ssh",
+                    "disk": 20,
+                    "label": f"igris-{model.replace(':','-')}",
+                },
+            )
+            instance_id = str(resp.get("id") or resp.get("new_contract", ""))
+            if not instance_id:
+                return {"success": False, "error": f"Provision failed: {resp}", "gated": True}
+
+            instance = VastInstance(
+                instance_id=instance_id,
+                status="provisioning",
+                model=model,
+                gpu=SUPPORTED_MODELS.get(model, {}).get("min_gpu", "unknown"),
+                cost_per_hour=SUPPORTED_MODELS.get(model, {}).get("estimated_cost_hr", 0.0),
+                created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                region="vast.ai",
+            )
+            self._instance = instance
+            self._provision_history.append({
+                "action": "provision",
+                "instance_id": instance_id,
+                "offer_id": offer_id,
+                "model": model,
+                "timestamp": instance.created_at,
+            })
+            return {"success": True, "instance": instance.to_dict(), "gated": True}
+
+        except Exception as e:
+            return {"success": False, "error": str(e), "gated": True}
 
     # -- Destroy (gated) --
 
@@ -357,21 +417,20 @@ class VastAIManager:
                 "error": "No active instance to destroy.",
             }
 
-        # Mock destroy
+        # Real destroy via Vast.ai API
         old_id = self._instance.instance_id
+        try:
+            _vastai_request("DELETE", f"/instances/{old_id}/", cfg.api_key)
+        except Exception as e:
+            return {"success": False, "error": f"Destroy API call failed: {e}"}
+
         self._instance.status = "destroyed"
         self._provision_history.append({
             "action": "destroy",
             "instance_id": old_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "mock": True,
         })
-
-        return {
-            "success": True,
-            "destroyed_instance": old_id,
-            "note": "MOCK — no real instance destroyed.",
-        }
+        return {"success": True, "destroyed_instance": old_id}
 
     # -- Set mode (gated) --
 

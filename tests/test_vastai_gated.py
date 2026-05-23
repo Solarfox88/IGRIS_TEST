@@ -20,6 +20,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from igris.layers.advisory import vastai_manager as _vastai_mod
 from igris.layers.advisory.vastai_manager import (
     APPROVAL_TOKEN,
     SUPPORTED_MODELS,
@@ -28,6 +29,36 @@ from igris.layers.advisory.vastai_manager import (
 )
 from igris.models.config import CONFIG
 from igris.web.server import create_app
+
+# ---------------------------------------------------------------------------
+# Shared mock for _vastai_request — keeps tests offline and deterministic
+# ---------------------------------------------------------------------------
+
+_MOCK_BUNDLES_RESPONSE = {
+    "offers": [
+        {
+            "id": 99001,
+            "gpu_name": "RTX 3090",
+            "gpu_ram": 24576,  # 24 GB in MB
+            "num_gpus": 1,
+            "dph_total": 0.29,
+            "cuda_max_good": 12.1,
+            "geolocation": "US",
+        }
+    ]
+}
+_MOCK_PROVISION_RESPONSE = {"id": 88001, "new_contract": 88001}
+_MOCK_DESTROY_RESPONSE = {"success": True}
+
+
+def _mock_vastai_request(method: str, path: str, api_key: str, payload=None, timeout: int = 20):
+    if method == "GET" and "/bundles" in path:
+        return _MOCK_BUNDLES_RESPONSE
+    if method == "PUT" and "/asks/" in path:
+        return _MOCK_PROVISION_RESPONSE
+    if method == "DELETE" and "/instances/" in path:
+        return _MOCK_DESTROY_RESPONSE
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -154,12 +185,12 @@ class TestOfferSearch:
         assert result.error
 
     def test_search_with_mock_key(self, manager):
-        with patch.object(CONFIG.vastai, "api_key", "mock-key-for-test"):
+        with patch.object(CONFIG.vastai, "api_key", "mock-key-for-test"), \
+             patch.object(_vastai_mod, "_vastai_request", _mock_vastai_request):
             result = manager.search_offers()
             d = result.to_dict()
             assert d["offer_count"] >= 1
-            for offer in d["offers"]:
-                assert "MOCK" in offer.get("note", "")
+            assert d["offers"][0]["gpu"] == "RTX 3090"
 
 
 # ---------------------------------------------------------------------------
@@ -187,14 +218,15 @@ class TestProvisionGated:
         assert "api_key" in result.get("error", "").lower() or "not configured" in result.get("error", "").lower()
 
     def test_provision_with_approval_succeeds(self, manager):
-        with patch.object(CONFIG.vastai, "api_key", "mock-key"):
+        with patch.object(CONFIG.vastai, "api_key", "mock-key"), \
+             patch.object(_vastai_mod, "_vastai_request", _mock_vastai_request):
             result = manager.provision(approval=APPROVAL_TOKEN)
             assert result["success"] is True
-            assert "MOCK" in result.get("note", "")
             assert result["instance"]["status"] == "provisioning"
 
     def test_provision_anti_duplicate(self, manager):
-        with patch.object(CONFIG.vastai, "api_key", "mock-key"):
+        with patch.object(CONFIG.vastai, "api_key", "mock-key"), \
+             patch.object(_vastai_mod, "_vastai_request", _mock_vastai_request):
             first = manager.provision(approval=APPROVAL_TOKEN)
             assert first["success"] is True
             second = manager.provision(approval=APPROVAL_TOKEN)
@@ -222,11 +254,12 @@ class TestProvisionGated:
             assert "budget" in result.get("error", "").lower() or "exceeds" in result.get("error", "").lower()
 
     def test_no_real_api_call(self, manager):
-        """Verify no real HTTP call is made."""
-        with patch.object(CONFIG.vastai, "api_key", "mock-key"):
+        """Verify provision works with patched API (no real HTTP call)."""
+        with patch.object(CONFIG.vastai, "api_key", "mock-key"), \
+             patch.object(_vastai_mod, "_vastai_request", _mock_vastai_request):
             result = manager.provision(approval=APPROVAL_TOKEN)
             assert result["success"] is True
-            assert "mock" in result["instance"]["instance_id"].lower()
+            assert result["instance"]["instance_id"] == "88001"
 
 
 # ---------------------------------------------------------------------------
@@ -248,14 +281,16 @@ class TestDestroyGated:
         assert "no active" in result.get("error", "").lower()
 
     def test_destroy_after_provision(self, manager):
-        with patch.object(CONFIG.vastai, "api_key", "mock-key"):
+        with patch.object(CONFIG.vastai, "api_key", "mock-key"), \
+             patch.object(_vastai_mod, "_vastai_request", _mock_vastai_request):
             manager.provision(approval=APPROVAL_TOKEN)
             result = manager.destroy(approval=APPROVAL_TOKEN)
             assert result["success"] is True
-            assert "MOCK" in result.get("note", "")
+            assert "destroyed_instance" in result
 
     def test_destroy_twice_fails(self, manager):
-        with patch.object(CONFIG.vastai, "api_key", "mock-key"):
+        with patch.object(CONFIG.vastai, "api_key", "mock-key"), \
+             patch.object(_vastai_mod, "_vastai_request", _mock_vastai_request):
             manager.provision(approval=APPROVAL_TOKEN)
             manager.destroy(approval=APPROVAL_TOKEN)
             result = manager.destroy(approval=APPROVAL_TOKEN)
