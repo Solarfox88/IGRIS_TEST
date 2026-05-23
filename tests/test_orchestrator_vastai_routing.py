@@ -34,6 +34,7 @@ from igris.layers.advisory.vastai_manager import (
     _SHARED_MANAGER,
     APPROVAL_TOKEN,
 )
+import igris.layers.advisory.vastai_fleet as _fleet_mod
 from igris.models.config import CONFIG
 
 
@@ -113,14 +114,11 @@ class TestGpuReasoningProfile:
 class TestOrchestratorUsesVastaiWhenReady:
 
     def test_hard_task_uses_vastai_when_ready(self):
-        """When instance is ready, hard_debugging → vastai_ollama, no cloud call."""
+        """When fleet has a ready endpoint, hard_debugging → vastai_ollama, no cloud call."""
         orch = ModelOrchestrator()
-        ready = _make_ready_instance()
 
-        with patch.object(_vast_mod, "_SHARED_MANAGER") as mock_mgr:
-            mock_mgr.get_ollama_endpoint.return_value = "http://165.10.20.30:32768"
-            mock_mgr._instance = ready
-
+        with patch.object(_fleet_mod._SHARED_FLEET, "get_ready_endpoint",
+                          return_value="http://165.10.20.30:32768"):
             with patch.object(orch, "_call_ollama", return_value=_make_ollama_result()) as mock_call:
                 result = orch.complete(
                     task_type="hard_debugging",
@@ -134,12 +132,9 @@ class TestOrchestratorUsesVastaiWhenReady:
 
     def test_security_review_uses_vastai_when_ready(self):
         orch = ModelOrchestrator()
-        ready = _make_ready_instance()
 
-        with patch.object(_vast_mod, "_SHARED_MANAGER") as mock_mgr:
-            mock_mgr.get_ollama_endpoint.return_value = "http://165.10.20.30:32768"
-            mock_mgr._instance = ready
-
+        with patch.object(_fleet_mod._SHARED_FLEET, "get_ready_endpoint",
+                          return_value="http://165.10.20.30:32768"):
             with patch.object(orch, "_call_ollama", return_value=_make_ollama_result("secure")) as mc:
                 result = orch.complete(
                     task_type="security_review",
@@ -150,7 +145,7 @@ class TestOrchestratorUsesVastaiWhenReady:
         assert mc.called
 
     def test_vastai_used_before_cloud_when_ready(self):
-        """vastai_ollama must be tried before deepseek_strong when instance is ready."""
+        """vastai_ollama must be tried before deepseek_strong when fleet has endpoint."""
         orch = ModelOrchestrator()
         call_order = []
 
@@ -158,10 +153,8 @@ class TestOrchestratorUsesVastaiWhenReady:
             call_order.append(provider.name)
             return _make_ollama_result()
 
-        with patch.object(_vast_mod, "_SHARED_MANAGER") as mock_mgr:
-            mock_mgr.get_ollama_endpoint.return_value = "http://1.2.3.4:11434"
-            mock_mgr._instance = _make_ready_instance()
-
+        with patch.object(_fleet_mod._SHARED_FLEET, "get_ready_endpoint",
+                          return_value="http://1.2.3.4:11434"):
             with patch.object(orch, "_call_provider", side_effect=track_call):
                 orch.complete(
                     task_type="architecture_review",
@@ -395,23 +388,19 @@ class TestSharedManagerSingleton:
     def test_shared_manager_is_vastai_manager(self):
         assert isinstance(_SHARED_MANAGER, VastAIManager)
 
-    def test_orchestrator_uses_shared_manager(self):
-        """_check_vastai_available imports _SHARED_MANAGER — not a new instance."""
+    def test_orchestrator_uses_shared_fleet(self):
+        """_check_vastai_available now uses _SHARED_FLEET.get_ready_endpoint()."""
         orch = ModelOrchestrator()
-        seen_managers = []
 
-        original = _vast_mod._SHARED_MANAGER
+        with patch.object(_fleet_mod._SHARED_FLEET, "get_ready_endpoint",
+                          return_value=None) as mock_ep:
+            with patch.object(_vast_mod, "_SHARED_MANAGER") as mock_mgr:
+                mock_mgr.auto_provision_for_orchestrator.return_value = False
+                provider = orch.providers["vastai_ollama"]
+                orch._check_vastai_available(provider)
 
-        with patch.object(_vast_mod, "_SHARED_MANAGER") as mock_mgr:
-            mock_mgr.get_ollama_endpoint.return_value = None
-            mock_mgr.auto_provision_for_orchestrator.return_value = False
-            seen_managers.append(mock_mgr)
-
-            provider = orch.providers["vastai_ollama"]
-            orch._check_vastai_available(provider)
-
-        # The mock was actually called — confirming orchestrator imported _SHARED_MANAGER
-        mock_mgr.get_ollama_endpoint.assert_called_once()
+        # Fleet's get_ready_endpoint was called — confirms orchestrator uses fleet
+        mock_ep.assert_called_once()
 
     def test_state_visible_across_references(self):
         """Provision state set on _SHARED_MANAGER is visible via get_ollama_endpoint."""
