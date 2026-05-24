@@ -262,6 +262,17 @@ def _classify_goal(request: AssignmentRequest) -> Tuple[str, str, List[str]]:
     # Classify them as complex_implementation before the test_only check consumes them.
     goal_lower = goal.lower()
     if any(pat in goal_lower for pat in _FEAT_IMPL_PATTERNS):
+        # Long feat(*) goals (> 800 chars) carry full acceptance criteria, multi-file
+        # integration targets and benchmark specs — they benefit from a large reasoning
+        # model on first attempt rather than going through cheap_cloud → escalation loop.
+        # Route directly to architecture_review (→ gpu_reasoning → vastai_ollama first)
+        # so VastAI auto-provision is triggered immediately.  Falls through gracefully to
+        # deepseek_strong / openai if the instance is not ready yet.
+        if len(goal) > 800:
+            reasons.append(
+                f"heavy feat(*) goal (len={len(goal)}) — architecture_review / gpu_reasoning"
+            )
+            return "backend_coder", "architecture_review", reasons
         reasons.append("feat(*) implementation goal — complex_implementation override")
         return "backend_coder", "complex_implementation", reasons
 
