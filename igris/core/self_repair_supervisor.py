@@ -3760,7 +3760,17 @@ class SelfRepairSupervisor:
     ) -> bool:
         has_diff = bool(diff_stat.output.strip())
         stop_reason = str(reasoning.get("stop_reason", ""))
-        delivered_changes = bool(reasoning.get("files_modified")) or (
+        files_modified: List[str] = list(reasoning.get("files_modified") or [])
+        # `git diff --stat` only shows tracked file changes. When the reasoning worker
+        # creates NEW files (untracked), they won't appear in the diff even though real
+        # work was done. Detect this by checking whether the reported modified paths
+        # actually exist on disk — if they do, treat it as a valid diff.
+        if not has_diff and files_modified:
+            has_diff = any(
+                (Path(self.project_root) / f).exists()
+                for f in files_modified
+            )
+        delivered_changes = bool(files_modified) or (
             has_diff and stop_reason == "reasoning_timeout"
         )
         reasoning_finished = reasoning.get("status") == "finished"
