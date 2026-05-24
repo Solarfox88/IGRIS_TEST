@@ -272,7 +272,10 @@ class VastAIManager:
             for o in raw_offers:
                 gpu_ram_mb = o.get("gpu_ram", 0)
                 dph = o.get("dph_total", 999)
-                if gpu_ram_mb >= vram_mb and dph <= max_cost:
+                # Only include rentable offers — non-rentable ones silently fail
+                # the PUT /asks/{id}/ provisioning call, wasting the attempt.
+                is_rentable = o.get("rentable", True)
+                if gpu_ram_mb >= vram_mb and dph <= max_cost and is_rentable:
                     offers.append({
                         "id": o.get("id"),
                         "gpu": o.get("gpu_name", "?"),
