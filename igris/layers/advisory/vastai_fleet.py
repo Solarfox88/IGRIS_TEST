@@ -38,7 +38,7 @@ _log = logging.getLogger(__name__)
 STARTUP_COLD_MINUTES: float = 10.0
 STARTUP_WARM_MINUTES: float = 0.0
 MARGIN_MINUTES: float = 3.0
-RATE_USD_PER_MIN: float = 0.488 / (24 * 60)   # V100 ≈ $0.000339/min
+RATE_USD_PER_MIN: float = 0.30 / 60           # deepseek-r1:32b ≈ $0.005/min
 DEFAULT_HISTORY_AVG_MINUTES: float = 45.0
 
 
@@ -73,8 +73,33 @@ class FleetPolicy:
     max_idle_minutes: float = 10.0
     stuck_threshold_minutes: float = 5.0
     max_hourly_cost_usd: float = 2.50
-    instance_hourly_cost_usd: float = 0.488 / 24
+    # Default matches SUPPORTED_MODELS["deepseek-r1:32b"]["estimated_cost_hr"] in vastai_manager.py
+    # Override with VASTAI_INSTANCE_HOURLY_COST env var if using a different model/bid
+    instance_hourly_cost_usd: float = 0.30
 
+    @classmethod
+    def from_env(cls) -> "FleetPolicy":
+        """Build policy from env vars, falling back to defaults."""
+        policy = cls()
+        raw_max_cost = os.environ.get("VASTAI_MAX_HOURLY_COST", "")
+        if raw_max_cost:
+            try:
+                policy.max_hourly_cost_usd = float(raw_max_cost)
+            except ValueError:
+                pass
+        raw_max_inst = os.environ.get("VASTAI_MAX_INSTANCES", "")
+        if raw_max_inst:
+            try:
+                policy.max_instances = int(raw_max_inst)
+            except ValueError:
+                pass
+        raw_inst_cost = os.environ.get("VASTAI_INSTANCE_HOURLY_COST", "")
+        if raw_inst_cost:
+            try:
+                policy.instance_hourly_cost_usd = float(raw_inst_cost)
+            except ValueError:
+                pass
+        return policy
 
 @dataclass
 class QueuedTask:
@@ -187,8 +212,9 @@ class FleetState:
     def active(self) -> List[FleetInstance]:
         return [i for i in self.instances if i.status != InstanceStatus.TERMINATED]
 
-    def hourly_cost_usd(self) -> float:
-        return len(self.active) * FleetPolicy().instance_hourly_cost_usd
+    def hourly_cost_usd(self, instance_hourly_cost: float = 0.30) -> float:
+        """Compute current fleet hourly cost using the provided per-instance rate."""
+        return len(self.active) * instance_hourly_cost
 
     def get(self, instance_id: str) -> Optional[FleetInstance]:
         for inst in self.instances:
