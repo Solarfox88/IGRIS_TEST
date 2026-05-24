@@ -831,10 +831,15 @@ class LocalSupervisorBackend:
         }
 
     def git_diff_stat(self) -> CommandResult:
-        return self._run(["git", "diff", "--stat"], timeout=10)
+        # Use `git diff HEAD --stat` instead of bare `git diff --stat` so that
+        # newly-created files that have been staged (git add) are included.
+        # Bare `git diff --stat` only shows unstaged changes to *tracked* files;
+        # `git diff HEAD --stat` captures all changes vs HEAD (staged or unstaged).
+        return self._run(["git", "diff", "HEAD", "--stat"], timeout=10)
 
     def git_diff(self) -> CommandResult:
-        return self._run(["git", "diff"], timeout=10)
+        # Mirror the broader HEAD-relative view used by git_diff_stat.
+        return self._run(["git", "diff", "HEAD"], timeout=10)
 
     def run_tests(
         self,
