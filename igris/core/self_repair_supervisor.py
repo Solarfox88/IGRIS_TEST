@@ -3083,7 +3083,7 @@ class SelfRepairSupervisor:
         assignment_decision: Optional[Any] = None
         if _assignment_router_available:
             try:
-                _outcomes_path = str(self.project_root / ".igris" / "assignment_outcomes.json")
+                _outcomes_path = str(Path(self.project_root) / ".igris" / "assignment_outcomes.json")
                 _router = AssignmentRouter(outcomes_path=_outcomes_path)
                 _req = AssignmentRequest(
                     goal_text=config.goal,
