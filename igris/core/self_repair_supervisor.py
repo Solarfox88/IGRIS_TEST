@@ -3260,6 +3260,10 @@ class SelfRepairSupervisor:
                     # escalation path is preserved.
                     if stop_reason == "no_diff_repair" and not modified_files:
                         stage_failure = "reasoning_loop_blocked"
+                        # Record capability signal immediately so the decomposition
+                        # decision threshold is still updated even though the normal
+                        # classify_failure path (inside `if not failure:`) is skipped.
+                        self._record_capability_signal(run, "no_diff_repair")
 
             ui_visibility_required = self._goal_requires_ui_visibility(config.goal)
             ui_card_contract_goal = self._goal_targets_rank_ui_card(config.goal)
