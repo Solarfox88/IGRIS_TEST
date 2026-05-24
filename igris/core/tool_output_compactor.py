@@ -1,172 +1,202 @@
-"""
-ToolOutputCompactor — rule-driven stdout compaction before LLM injection.
+"""ToolOutputCompactor - Rule-driven stdout compaction before LLM injection.
 
-Implements configurable compaction rules to reduce token usage and noise
-from tool outputs (bash stdout, test runner logs, etc.).
+Implements the TokenJuice concept from tinyhumansai/openhuman to reduce token
+usage by compressing tool outputs before they reach the reasoning loop.
 """
 
 import re
-from typing import List, Optional, Set
+from typing import Optional, Dict, List, Any
 
 
 class ToolOutputCompactor:
-    """Apply compaction rules to tool output text."""
+    """Compacts tool output using configurable rules.
 
-    # ANSI escape sequence pattern (most common types)
-    ANSI_ESCAPE = re.compile(
-        r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])'
-    )
+    Rules:
+        1. Dedup consecutive identical lines
+        2. Collapse repeated patterns (e.g., ``..........`` → ``[10× '.']``)
+        3. Strip ANSI escape codes
+        4. Truncate long stack traces (keep first 10, last 5)
+        5. Tail-first for test runners (pytest/jest) — keep head + tail
 
-    # Recognisable test runner markers (case-insensitive)
-    TEST_RUNNER_MARKERS = re.compile(
-        r'(FAILED|ERROR|PASSED|FAILURES|test session starts|'
-        r'Ran \d+ tests? in|\d+ passed|\d+ failed|'
-        r'OK \(\d+ tests?\))',
-        re.IGNORECASE
-    )
+    Args:
+        config: dict with keys:
+            - dedup_enabled (bool): default True
+            - collapse_repeated_enabled (bool): default True
+            - strip_ansi_enabled (bool): default True
+            - truncate_stacktrace_enabled (bool): default True
+            - tail_first_enabled (bool): default True
+            - tail_first_head_lines (int): lines to keep from beginning
+            - tail_first_tail_lines (int): lines to keep from end
+            - tail_first_max_lines (int): threshold to trigger tail-first
+            - truncate_stacktrace_head (int): lines to keep at top
+            - truncate_stacktrace_tail (int): lines to keep at bottom
+            - collapse_min_repeats (int): minimum char repeats to collapse
+    """
 
-    # Characters to collapse when they repeat verbatim
-    COLLAPSE_CHARS = re.compile(r'([.-=*#])\1{2,}')
+    DEFAULT_CONFIG: Dict[str, Any] = {
+        "dedup_enabled": True,
+        "collapse_repeated_enabled": True,
+        "strip_ansi_enabled": True,
+        "truncate_stacktrace_enabled": True,
+        "tail_first_enabled": True,
+        "tail_first_head_lines": 50,
+        "tail_first_tail_lines": 200,
+        "tail_first_max_lines": 500,
+        "truncate_stacktrace_head": 10,
+        "truncate_stacktrace_tail": 5,
+        "collapse_min_repeats": 10,
+    }
 
-    # Stack trace line pattern (typical indent or "at " prefix)
-    STACK_TRACE_LINE = re.compile(
-        r'^\s+at\s+|^\s+File\s+".*",\s+line\s+|^Traceback|^\s+\^\s*$'
-    )
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = {**self.DEFAULT_CONFIG, **(config or {})}
 
-    DEFAULT_RULES: List[str] = [
-        'strip_ansi',
-        'dedup_adjacent',
-        'collapse_patterns',
-        'truncate_stacktraces',
-        'tail_test_runners'
-    ]
+    def compact(self, text: str, source_type: str = "generic") -> str:
+        """Apply all enabled compaction rules.
 
-    def __init__(self, rules: Optional[List[str]] = None):
-        self.rules = rules or self.DEFAULT_RULES
+        Args:
+            text: raw tool output
+            source_type: hint ("generic", "test_runner", "pytest", "jest")
 
-    def compact(self, text: str, rules: Optional[List[str]] = None) -> str:
-        """Apply all requested rules and return the compacted string."""
-        active = rules or self.rules
+        Returns:
+            compacted text
+        """
+        if not text:
+            return text
+
         result = text
 
-        for rule in active:
-            method = getattr(self, f'_rule_{rule}', None)
-            if method is None:
-                # Unknown rule – skip silently
-                continue
-            result = method(result)
+        # Rule 3: Strip ANSI early to avoid interfering with other rules
+        if self.config["strip_ansi_enabled"]:
+            result = self._strip_ansi(result)
+
+        # Rule 1: Dedup consecutive identical lines
+        if self.config["dedup_enabled"]:
+            result = self._dedup_consecutive(result)
+
+        # Rule 2: Collapse repeated patterns
+        if self.config["collapse_repeated_enabled"]:
+            result = self._collapse_repeated_patterns(result)
+
+        # Rule 4: Truncate long stack traces (only if generic or unknown; test runners have their own handling)
+        if self.config["truncate_stacktrace_enabled"] and source_type == "generic":
+            result = self._truncate_stacktrace(result)
+
+        # Rule 5: Tail-first for test runners
+        if self.config["tail_first_enabled"] and source_type in ("test_runner", "pytest", "jest"):
+            result = self._tail_first(result, source_type)
 
         return result
 
-    # ---- private rule methods ----
+    # ------------------------------------------------------------------
+    # Private rule implementations
+    # ------------------------------------------------------------------
 
-    def _rule_strip_ansi(self, text: str) -> str:
-        """Remove ANSI color/style escape codes."""
-        return self.ANSI_ESCAPE.sub('', text)
-
-    def _rule_dedup_adjacent(self, text: str) -> str:
-        """Deduplicate consecutive identical lines.
-
-        Lines that repeat more than once are collapsed to a single instance,
-        optionally with a count annotation.
-        """
+    @staticmethod
+    def _dedup_consecutive(text: str) -> str:
+        """Remove consecutive duplicate lines."""
         lines = text.splitlines()
-        if not lines:
-            return text
-
-        out: List[str] = []
+        deduped = []
         prev = None
-        count = 0
-
         for line in lines:
-            if line == prev:
-                count += 1
-            else:
-                if prev is not None:
-                    if count == 1:
-                        out.append(prev)
-                    else:
-                        out.append(f'{prev}  [repeated {count} times]')
+            if line != prev:
+                deduped.append(line)
                 prev = line
-                count = 1
+        return "\n".join(deduped)
 
-        # handle trailing group
-        if prev is not None:
-            if count == 1:
-                out.append(prev)
+    @staticmethod
+    def _strip_ansi(text: str) -> str:
+        """Strip ANSI escape sequences."""
+        ansi_escape = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+        return ansi_escape.sub('', text)
+
+    def _collapse_repeated_patterns(self, text: str) -> str:
+        """Collapse lines consisting of a single repeated character.
+
+        Example: ``..........`` → ``[10× '.']``
+        """
+        min_repeats = self.config["collapse_min_repeats"]
+        lines = text.splitlines()
+        collapsed = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped and len(stripped) >= min_repeats and len(set(stripped)) == 1:
+                char = stripped[0]
+                count = len(stripped)
+                # Replace with collapsed notation, preserving leading whitespace
+                leading_ws = line[:len(line) - len(line.lstrip())]
+                collapsed.append(f"{leading_ws}[{count}× '{char}']")
             else:
-                out.append(f'{prev}  [repeated {count} times]')
+                collapsed.append(line)
+        return "\n".join(collapsed)
 
-        return '\n'.join(out)
+    def _truncate_stacktrace(self, text: str) -> str:
+        """Truncate long Python tracebacks: keep first N and last M lines.
 
-    def _rule_collapse_patterns(self, text: str) -> str:
-        """Collapse long runs of the same character (e.g. dots, dashes)."""
-        def _replace(match):
-            char = match.group(0)[0]
-            length = len(match.group(0))
-            return f'[{length}× "{char}"]'
-
-        return self.COLLAPSE_CHARS.sub(_replace, text)
-
-    def _rule_truncate_stacktraces(self, text: str) -> str:
-        """Keep first 10 + last 5 lines of a stack trace, elide middle.
-
-        We identify a contiguous block of lines that look like a stack trace
-        and shorten it.
+        Recognises typical Python stack frames (lines starting with ``  File "...", line ...``).
         """
+        head_lines = self.config["truncate_stacktrace_head"]
+        tail_lines = self.config["truncate_stacktrace_tail"]
         lines = text.splitlines()
-        trace_blocks = self._find_trace_blocks(lines)
-        if not trace_blocks:
+
+        # Detect stack frames: lines that match '  File '
+        frame_pattern = re.compile(r'^  File ".+", line \d+')
+        frame_indices = [i for i, line in enumerate(lines) if frame_pattern.match(line)]
+
+        if len(frame_indices) <= head_lines + tail_lines:
+            return text  # Not long enough to truncate
+
+        # Split into blocks of consecutive frames
+        # A simple heuristic: if there are many frames, truncate the middle.
+        # We'll keep the first `head_lines` frames and the last `tail_lines` frames.
+        # Find the corresponding line indices.
+        keep_first_end = frame_indices[head_lines - 1] if head_lines > 0 else -1
+        keep_last_start = frame_indices[-tail_lines] if tail_lines > 0 else len(lines)
+
+        if keep_first_end >= keep_last_start:
+            return text  # overlap, nothing to truncate
+
+        # Build result: lines before first frame? Keep everything before first frame?
+        # We'll keep the entire preamble (lines before any frame), then first N frames,
+        # then insert a truncation marker, then the last M frames, then the final error message.
+        # The final error line is typically after the last frame.
+        if not frame_indices:
             return text
 
-        # Work from end to start to keep indices stable
-        for start, end in reversed(trace_blocks):
-            if end - start + 1 <= 15:
-                continue  # short trace, keep as-is
-            keep_head = lines[start:start + 10]
-            keep_tail = lines[end - 4:end + 1]  # last 5 lines
-            elision = [
-                f'  [... {end - start + 1 - 15} lines elided ...]',
-            ]
-            replacement = keep_head + elision + keep_tail
-            lines[start:end + 1] = replacement
+        preamble = lines[:frame_indices[0]]
+        first_block = lines[frame_indices[0]: keep_first_end + 1]
+        # Find the end of the last frame we keep, plus any following lines until the start of the
+        # last frames block. Better approach: keep lines up to the end of the head_frame block,
+        # then insert marker, then include lines from the start of the tail block onward.
+        # If tail_lines == 0, we just truncate after head.
 
-        return '\n'.join(lines)
+        if tail_lines == 0:
+            result = preamble + first_block + ["[... truncated ...]"]
+            return "\n".join(result)
 
-    def _rule_tail_test_runners(self, text: str) -> str:
-        """For test runner output, keep the opening and the final summary.
+        tail_start_index = frame_indices[-tail_lines]
+        tail_block = lines[tail_start_index:]
+        result = preamble + first_block + ["[... truncated ...]"] + tail_block
+        return "\n".join(result)
 
-        Keeps first 5 lines (command header) and last 80 lines.
-        If the output does not look like a test run, it is returned unchanged.
-        """
-        if not self._is_test_output(text):
-            return text
-
+    def _tail_first(self, text: str, source_type: str) -> str:
+        """Keep only the head and tail of the output for test runners."""
+        head_lines = self.config["tail_first_head_lines"]
+        tail_lines = self.config["tail_first_tail_lines"]
+        max_lines = self.config["tail_first_max_lines"]
         lines = text.splitlines()
-        if len(lines) <= 85:
+        total = len(lines)
+
+        if total <= max_lines:
             return text
 
-        head = lines[:5]
-        tail = lines[-80:]
-        return '\n'.join(head + [f'  [... {len(lines) - 85} lines omitted ...]'] + tail)
+        # Keep first `head_lines` and last `tail_lines`
+        head = lines[:head_lines]
+        tail = lines[-tail_lines:]
 
-    # ---- helpers ----
+        # Insert a note about how many lines were omitted
+        skipped = total - head_lines - tail_lines
+        if skipped <= 0:
+            return text
 
-    def _is_test_output(self, text: str) -> bool:
-        """Return True if text looks like a test runner summary."""
-        return bool(self.TEST_RUNNER_MARKERS.search(text))
-
-    def _find_trace_blocks(self, lines: List[str]) -> List[List[int]]:
-        """Return list of [start, end] indices (inclusive) of stack trace blocks."""
-        blocks = []
-        i = 0
-        while i < len(lines):
-            if not self.STACK_TRACE_LINE.match(lines[i]):
-                i += 1
-                continue
-            start = i
-            while i < len(lines) and self.STACK_TRACE_LINE.match(lines[i]):
-                i += 1
-            end = i - 1
-            blocks.append([start, end])
-        return blocks
+        result = head + [f"[... {skipped} lines skipped ...]"] + tail
+        return "\n".join(result)

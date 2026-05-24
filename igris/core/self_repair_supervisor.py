@@ -894,12 +894,19 @@ class LocalSupervisorBackend:
             if not add.success:
                 return add
         result = self._run(["git", "commit", "-m", message], timeout=60)
+        combined = (result.output or "") + (result.error or "")
         if not result.success and (
-            "nothing to commit" not in result.error
-            and "not staged" in result.output + result.error
+            "nothing to commit" not in combined
+            and "not staged" in combined
         ):
             # Stage all tracked modified files and retry once.
             self._run(["git", "add", "-u"], timeout=30)
+            result = self._run(["git", "commit", "-m", message], timeout=60)
+            combined = (result.output or "") + (result.error or "")
+        if not result.success and "nothing to commit" in combined:
+            # Last-resort: stage ALL changes (including untracked in allowed dirs)
+            # in case the earlier file-specific add missed something.
+            self._run(["git", "add", "-A", "--", "igris", "tests", "docs"], timeout=30)
             result = self._run(["git", "commit", "-m", message], timeout=60)
         return result
 
@@ -3297,6 +3304,17 @@ class SelfRepairSupervisor:
             diff_stat = self.backend.git_diff_stat()
             diff = self.backend.git_diff()
             run.add("diff_stat", "success" if diff_stat.success else "failure", _command_detail(diff_stat))
+            # Persist the full diff to disk immediately so _complete_rank can
+            # recover if the working tree is unexpectedly reverted before the
+            # commit (e.g. watchdog cleanup racing during branch transitions).
+            if diff_stat.output.strip() and diff.output.strip():
+                try:
+                    _patch_path = Path(self.project_root) / ".igris" / "rank_pending.patch"
+                    _patch_path.parent.mkdir(parents=True, exist_ok=True)
+                    _patch_path.write_text(diff.output, encoding="utf-8")
+                    run.add("diff_patch_saved", "success", str(_patch_path))
+                except Exception as _pe:
+                    run.add("diff_patch_saved", "failure", str(_pe))
             if (
                 ui_visibility_required
                 and not ui_visibility_changed
@@ -4736,6 +4754,39 @@ class SelfRepairSupervisor:
         else:
             commit = self.backend.commit(f"feat: complete supervised {config.rank_id}", ["igris", "tests"])
             run.add("commit", "success" if commit.success else "failure", _command_detail(commit))
+            if not commit.success and "nothing to commit" in (commit.output or "") + (commit.error or ""):
+                # Working tree unexpectedly clean — attempt patch-based recovery.
+                # The diff was saved to disk before tests ran; apply it now.
+                _patch_path = Path(self.project_root) / ".igris" / "rank_pending.patch"
+                if _patch_path.exists():
+                    run.add("commit_patch_recovery", "running", "Applying saved diff patch to recover working tree")
+                    apply = self.backend._run(
+                        ["git", "apply", "--index", str(_patch_path)],
+                        timeout=30,
+                    )
+                    run.add(
+                        "commit_patch_recovery",
+                        "success" if apply.success else "failure",
+                        _command_detail(apply),
+                    )
+                    if apply.success:
+                        commit = self.backend.commit(
+                            f"feat: complete supervised {config.rank_id}", None
+                        )
+                        run.add(
+                            "commit",
+                            "success" if commit.success else "failure",
+                            _command_detail(commit),
+                        )
+                    try:
+                        _patch_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            elif commit.success:
+                try:
+                    (Path(self.project_root) / ".igris" / "rank_pending.patch").unlink(missing_ok=True)
+                except Exception:
+                    pass
             if not commit.success:
                 return self._blocked(
                     run,
