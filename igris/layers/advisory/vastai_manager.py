@@ -386,7 +386,8 @@ class VastAIManager:
                     "client_id": "me",
                     "image": "pytorch/pytorch:latest",
                     "runtype": "ssh",
-                    "disk": 20,
+                    # NOTE: do NOT pass "disk" — triggers --storage-opt size=Ng
+                    # which requires XFS+pquota on the host (most hosts use ext4).
                     "label": f"igris-{model.replace(':','-')}",
                 },
             )
@@ -637,6 +638,35 @@ class VastAIManager:
                         self._instance.status = "destroyed"
                     return
 
+                elif actual_status in ("loading", None, ""):
+                    # Check if Docker reported an error in status_msg (e.g. storage-opt
+                    # error on ext4 hosts).  These never transition to "error" — they
+                    # stay in "loading" until we explicitly kill them.
+                    status_msg = inst.get("status_msg") or ""
+                    _FATAL_MSG_PATTERNS = (
+                        "storage-opt",
+                        "Error response from daemon",
+                        "OCI runtime",
+                        "no space left",
+                        "permission denied",
+                    )
+                    if any(p in status_msg for p in _FATAL_MSG_PATTERNS):
+                        _log.warning(
+                            "vastai poll: instance_id=%s stuck loading with fatal Docker error"
+                            " — destroying.  status_msg=%r",
+                            instance_id, status_msg[:200],
+                        )
+                        try:
+                            _vastai_request("DELETE", f"/instances/{instance_id}/", api_key)
+                            _log.info("vastai poll: deleted stuck-loading instance %s", instance_id)
+                        except Exception as _del_exc:
+                            _log.warning(
+                                "vastai poll: DELETE failed for %s: %s", instance_id, _del_exc
+                            )
+                        if self._instance and self._instance.instance_id == instance_id:
+                            self._instance.status = "destroyed"
+                        return
+
             except Exception as exc:
                 _log.debug("vastai poll error: %s", exc)
 
@@ -667,10 +697,27 @@ class VastAIManager:
                         "vastai startup: found orphaned instance %s label=%s status=%s",
                         inst_id, label, actual_status,
                     )
-                    if actual_status in ("error", "exited", "offline", ""):
+                    # "loading" with a Docker error or stuck for >5 min counts as terminal.
+                    status_msg = inst.get("status_msg") or ""
+                    _FATAL_PATTERNS = (
+                        "storage-opt", "Error response from daemon",
+                        "OCI runtime", "no space left", "permission denied",
+                    )
+                    loading_with_error = actual_status in ("loading", None) and any(
+                        p in status_msg for p in _FATAL_PATTERNS
+                    )
+                    # actual_status=None (JSON null) means Vast.ai hasn't assigned a status
+                    # yet — if we see it at startup time, the previous service run left it
+                    # stuck before Docker ever started.  Treat as terminal.
+                    is_terminal = (
+                        actual_status in ("error", "exited", "offline", "")
+                        or actual_status is None
+                        or loading_with_error
+                    )
+                    if is_terminal:
                         try:
                             _vastai_request("DELETE", f"/instances/{inst_id}/", cfg.api_key)
-                            _log.info("vastai startup: deleted orphaned instance %s", inst_id)
+                            _log.info("vastai startup: deleted orphaned instance %s (status=%s)", inst_id, actual_status)
                         except Exception as exc:
                             _log.warning("vastai startup: DELETE %s failed: %s", inst_id, exc)
                     elif actual_status == "running" and self._instance is None:
