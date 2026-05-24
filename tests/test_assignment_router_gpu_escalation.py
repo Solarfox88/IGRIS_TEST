@@ -147,13 +147,26 @@ class TestBuildCandidatesGpuCandidate:
         profiles = [c.profile for c in cands]
         assert "gpu_reasoning" not in profiles
 
-    def test_gpu_reasoning_candidate_absent_after_prior1(self):
-        """After first attempt (prior=1), gpu_already_tried → no gpu_reasoning candidate."""
+    def test_gpu_reasoning_candidate_absent_after_prior2(self):
+        """After two attempts (prior>=2), gpu_already_tried → no gpu_reasoning candidate.
+
+        Threshold is 2 (not 1) because the first run may be blocked before reasoning
+        starts (e.g. baseline test failure) — VastAI would never have been attempted
+        despite prior_attempts=1.  Two runs gives gpu_reasoning a real chance to fire.
+        """
+        cands = self._candidates(
+            capability_signals={"no_diff_repair": 4}, prior_attempts=2,
+        )
+        profiles = [c.profile for c in cands]
+        assert "gpu_reasoning" not in profiles
+
+    def test_gpu_reasoning_candidate_present_at_prior1(self):
+        """With prior=1 gpu_reasoning is still offered (threshold raised to prior>=2)."""
         cands = self._candidates(
             capability_signals={"no_diff_repair": 4}, prior_attempts=1,
         )
         profiles = [c.profile for c in cands]
-        assert "gpu_reasoning" not in profiles
+        assert "gpu_reasoning" in profiles
 
     def test_gpu_reasoning_model_is_deepseek_r1(self):
         cands = self._candidates(
@@ -187,9 +200,9 @@ class TestBuildCandidatesGpuCandidate:
             assert gpu.bootstrap_cost_per_attempt < cheap.bootstrap_cost_per_attempt
 
     def test_decompose_offered_after_gpu_tried(self):
-        """With prior=1, gpu_already_tried=True → force_decompose=True → decompose_first in candidates."""
+        """With prior>=2, gpu_already_tried=True → force_decompose=True → decompose_first in candidates."""
         cands = self._candidates(
-            capability_signals={"no_diff_repair": 4}, prior_attempts=1,
+            capability_signals={"no_diff_repair": 4}, prior_attempts=2,
         )
         strategies = [c.strategy for c in cands]
         assert "decompose_first" in strategies
@@ -276,15 +289,15 @@ class TestRouterDecideEscalation:
         # Should be in decompose or strong_execution phase
         assert d.preferred_profile in ("strong_execution", "cheap_cloud_reasoning")
 
-    def test_ndr5_prior1_does_not_retry_gpu(self):
-        """After one gpu attempt (prior=1), should NOT route back to gpu_reasoning."""
-        r = req(capability_signals={"no_diff_repair": 5}, prior_attempts=1, is_repair=True)
+    def test_ndr5_prior2_does_not_retry_gpu(self):
+        """After two attempts (prior=2), should NOT route back to gpu_reasoning."""
+        r = req(capability_signals={"no_diff_repair": 5}, prior_attempts=2, is_repair=True)
         d = router().decide(r)
         assert d.preferred_profile != "gpu_reasoning"
 
-    def test_ndr5_prior1_uses_decompose(self):
-        """After gpu attempt, decompose_first or strong with decompose=True."""
-        r = req(capability_signals={"no_diff_repair": 5}, prior_attempts=1, is_repair=True)
+    def test_ndr5_prior2_uses_decompose(self):
+        """After two gpu attempts, decompose_first or strong with decompose=True."""
+        r = req(capability_signals={"no_diff_repair": 5}, prior_attempts=2, is_repair=True)
         d = router().decide(r)
         # Either decompose flag set OR strategy contains 'decompose'
         assert d.should_decompose_first is True or "decompose" in d.execution_strategy
