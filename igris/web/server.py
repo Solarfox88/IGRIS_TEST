@@ -970,6 +970,18 @@ def create_app() -> FastAPI:
         status = _SHARED_FLEET.fleet_status()
         return {"queue_depth": status["queue_depth"], "queue": status.get("queue", [])}
 
+    @app.get("/api/fleet/worktrees")
+    async def api_fleet_worktrees() -> Dict[str, object]:
+        """Active git worktrees managed by WorktreeManager."""
+        status = _SHARED_FLEET.fleet_status()
+        return {"worktrees": status.get("worktrees", [])}
+
+    @app.get("/api/fleet/locks")
+    async def api_fleet_locks() -> Dict[str, object]:
+        """Current file lock registry — which issue holds which paths."""
+        status = _SHARED_FLEET.fleet_status()
+        return {"file_locks": status.get("file_locks", {})}
+
     # ---- Routing / Cost ----
 
     @app.get("/api/routing/history")
