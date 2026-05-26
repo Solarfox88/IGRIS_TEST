@@ -38,11 +38,16 @@ _MOCK_BUNDLES_RESPONSE = {
     "offers": [
         {
             "id": 99001,
-            "gpu_name": "RTX 3090",
+            "gpu_name": "RTX PRO 6000 WS",
             "gpu_ram": 24576,  # 24 GB in MB
             "num_gpus": 1,
             "dph_total": 0.29,
-            "cuda_max_good": 12.1,
+            # cuda >= 13.1 required — hosts below this threshold have broken CDI
+            # device specs ("unresolvable CDI devices" error at container start).
+            "cuda_max_good": 13.1,
+            "disk_space": 50,
+            "reliability2": 0.95,
+            "rentable": True,
             "geolocation": "US",
         }
     ]
@@ -97,7 +102,8 @@ class TestVastAIConfig:
         assert CONFIG.vastai.require_approval is True
 
     def test_max_hourly_cost(self):
-        assert CONFIG.vastai.max_hourly_cost == 0.50
+        # Default raised to 3.00 — RTX PRO 6000 WS (~$2.54/h) is cheapest working host
+        assert CONFIG.vastai.max_hourly_cost == 3.00
 
     def test_mode_on_demand(self):
         assert CONFIG.vastai.mode == "on_demand"
@@ -190,7 +196,7 @@ class TestOfferSearch:
             result = manager.search_offers()
             d = result.to_dict()
             assert d["offer_count"] >= 1
-            assert d["offers"][0]["gpu"] == "RTX 3090"
+            assert d["offers"][0]["gpu"] == "RTX PRO 6000 WS"
 
 
 # ---------------------------------------------------------------------------

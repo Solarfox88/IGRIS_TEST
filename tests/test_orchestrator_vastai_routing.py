@@ -305,8 +305,10 @@ class TestAutoProvisionSafetyGates:
         thread_started = []
 
         _fake_offers = {"offers": [
-            {"id": 5001, "gpu_name": "RTX 3090", "gpu_ram": 24576,
-             "num_gpus": 1, "dph_total": 0.05, "cuda_max_good": 12.0, "geolocation": "US"}
+            {"id": 5001, "gpu_name": "RTX PRO 6000 WS", "gpu_ram": 24576,
+             "num_gpus": 1, "dph_total": 0.05, "cuda_max_good": 13.1,
+             "disk_space": 50, "reliability2": 0.95, "rentable": True,
+             "geolocation": "US"}
         ]}
         _fake_provision = {"id": 9999}
 
@@ -328,7 +330,7 @@ class TestAutoProvisionSafetyGates:
         with patch.object(CONFIG.vastai, "auto_provision", True), \
              patch.object(CONFIG.vastai, "api_key", "test-key"), \
              patch.object(CONFIG.vastai, "mode", "on_demand"), \
-             patch.object(CONFIG.vastai, "max_hourly_cost", 0.50), \
+             patch.object(CONFIG.vastai, "max_hourly_cost", 3.00), \
              patch.object(_vast_mod, "_vastai_request", _fake_req), \
              patch.object(threading.Thread, "__init__", _track_thread):
             result = mgr.auto_provision_for_orchestrator(model="deepseek-r1:32b")

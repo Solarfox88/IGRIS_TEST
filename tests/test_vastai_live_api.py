@@ -49,18 +49,22 @@ def mock_api(monkeypatch):
                     # cheapest, enough VRAM
                     {"id": 1001, "gpu_name": "Tesla V100", "gpu_ram": 32768,
                      "num_gpus": 1, "dph_total": 0.021, "cuda_max_good": 12.2,
+                     "disk_space": 50, "reliability2": 0.95, "rentable": True,
                      "geolocation": "US"},
                     # second cheapest
                     {"id": 1002, "gpu_name": "RTX 3090", "gpu_ram": 24576,
                      "num_gpus": 1, "dph_total": 0.055, "cuda_max_good": 12.1,
+                     "disk_space": 50, "reliability2": 0.92, "rentable": True,
                      "geolocation": "IT"},
                     # over budget (>0.50)
                     {"id": 1003, "gpu_name": "A100", "gpu_ram": 81920,
                      "num_gpus": 1, "dph_total": 1.20, "cuda_max_good": 12.4,
+                     "disk_space": 100, "reliability2": 0.99, "rentable": True,
                      "geolocation": "US"},
                     # insufficient VRAM for deepseek-r1:32b (needs 24GB)
                     {"id": 1004, "gpu_name": "RTX 3060", "gpu_ram": 12288,
                      "num_gpus": 1, "dph_total": 0.05, "cuda_max_good": 12.0,
+                     "disk_space": 50, "reliability2": 0.90, "rentable": True,
                      "geolocation": "EU"},
                 ]
             }
@@ -174,7 +178,8 @@ class TestSearchOffersRealApi:
             "offers": [
                 {"id": i, "gpu_name": "RTX 3090", "gpu_ram": 24576,
                  "num_gpus": 1, "dph_total": 0.05 + i * 0.001,
-                 "cuda_max_good": 12.0, "geolocation": "US"}
+                 "cuda_max_good": 12.0, "disk_space": 50, "reliability2": 0.95,
+                 "rentable": True, "geolocation": "US"}
                 for i in range(20)
             ]
         }
@@ -250,7 +255,8 @@ class TestProvisionRealApi:
                 return {"offers": [{"id": 9, "gpu_name": "RTX 3090",
                                     "gpu_ram": 24576, "num_gpus": 1,
                                     "dph_total": 0.05, "cuda_max_good": 12.0,
-                                    "geolocation": "US"}]}
+                                    "disk_space": 50, "reliability2": 0.95,
+                                    "rentable": True, "geolocation": "US"}]}
             raise RuntimeError("Instance creation failed")
 
         monkeypatch.setattr(_mod, "_vastai_request", _fail)
@@ -300,7 +306,8 @@ class TestDestroyRealApi:
                 return {"offers": [{"id": 9, "gpu_name": "RTX 3090",
                                     "gpu_ram": 24576, "num_gpus": 1,
                                     "dph_total": 0.05, "cuda_max_good": 12.0,
-                                    "geolocation": "US"}]}
+                                    "disk_space": 50, "reliability2": 0.95,
+                                    "rentable": True, "geolocation": "US"}]}
             if method == "PUT":
                 return {"id": 77777}
             raise RuntimeError("Delete failed on remote")

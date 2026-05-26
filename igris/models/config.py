@@ -46,7 +46,7 @@ class VastAIConfig(BaseModel):
     fallback_model: str = "qwen2.5-coder:7b"
     auto_provision: bool = False
     require_approval: bool = True
-    max_hourly_cost: float = 0.50
+    max_hourly_cost: float = 3.00  # RTX PRO 6000 WS ~$2.54/h is the cheapest working host
     mode: str = "on_demand"  # on_demand | always_on | disabled
 
 
@@ -92,7 +92,7 @@ class Config(BaseModel):
             fallback_model=os.getenv("VASTAI_FALLBACK_MODEL", "qwen2.5-coder:7b"),
             auto_provision=os.getenv("VASTAI_AUTO_PROVISION", "false").lower() == "true",
             require_approval=os.getenv("VASTAI_REQUIRE_APPROVAL", "true").lower() != "false",
-            max_hourly_cost=float(os.getenv("VASTAI_MAX_HOURLY_COST", "0.50")),
+            max_hourly_cost=float(os.getenv("VASTAI_MAX_HOURLY_COST", "3.00")),
             mode=os.getenv("VASTAI_MODE", "on_demand"),
         )
         auto_commit = os.getenv("AUTO_COMMIT", "false").lower() == "true"

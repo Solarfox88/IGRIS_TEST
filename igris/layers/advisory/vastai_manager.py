@@ -9,19 +9,38 @@ Config defaults:
   VASTAI_FALLBACK_MODEL=qwen2.5-coder:7b
   VASTAI_AUTO_PROVISION=false
   VASTAI_REQUIRE_APPROVAL=true
-  VASTAI_MAX_HOURLY_COST=0.50
+  VASTAI_MAX_HOURLY_COST=3.00   # RTX PRO 6000 WS ~$1.27-$2.55/h is cheapest working host
   VASTAI_MODE=on_demand
+
+Image strategy: ollama/ollama (Ollama pre-installed, no curl dependency).
+ubuntu:22.04+curl failed because containers have no outbound internet access.
+
+Host compatibility (empirically verified 2026-05):
+  WORKS:   RTX PRO 6000 WS (host_id=81587, driver=590.44.01, cuda=13.1)
+  BROKEN:  RTX 5090 / H100 SXM / RTX PRO 6000 S (driver 575-580, cuda≤13.0)
+           → "failed to inject CDI devices: unresolvable CDI devices" — the
+             NVIDIA CDI spec on those hosts has stale GPU device IDs.
+             Fix required on host side: nvidia-ctk cdi generate --output=...
+  BROKEN:  Quadro GV100 (driver=570, cuda=12.8)
+           → "--storage-opt is supported only for overlay over xfs with 'pquota'"
+             Host filesystem is ext4 or XFS without pquota mount option.
+  BROKEN:  Tesla V100 — container starts (cur_state=running) but actual_status
+             stays None and ports are never assigned (dead Vast.ai monitoring).
+
+Filter: require cuda_max_good >= 13.1 to skip CDI-broken and storage-opt hosts.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 _log = logging.getLogger(__name__)
@@ -39,23 +58,32 @@ APPROVAL_TOKEN = "I_APPROVE_VASTAI_COSTS"
 SUPPORTED_MODELS = {
     "deepseek-r1:32b": {
         "vram_gb": 24,
-        "min_gpu": "RTX 3090",
-        "estimated_cost_hr": 0.30,
+        "disk_gb": 25,           # model ~19.9GB + ollama/ollama image overhead
+        "min_gpu": "RTX PRO 6000 WS",
+        # Empirical: cheapest reliably working Vast.ai host as of 2026-05 is
+        # RTX PRO 6000 WS (driver 590.44.01, cuda 13.1) at ~$1.27-$2.55/h.
+        # All other tested hosts (RTX 5090, H100, RTX PRO 6000 S, RTX 3090) fail
+        # with CDI device errors (broken NVIDIA Container Device Interface spec).
+        # Set VASTAI_MAX_HOURLY_COST ≥ 1.50 to provision.
+        "estimated_cost_hr": 1.50,
     },
     "deepseek-r1:70b": {
         "vram_gb": 48,
+        "disk_gb": 45,           # model ~40GB + overhead
         "min_gpu": "A6000",
-        "estimated_cost_hr": 0.60,
+        "estimated_cost_hr": 4.50,
     },
     "qwen2.5-coder:7b": {
         "vram_gb": 8,
+        "disk_gb": 10,
         "min_gpu": "RTX 3060",
-        "estimated_cost_hr": 0.10,
+        "estimated_cost_hr": 0.50,
     },
     "qwen2.5-coder:32b": {
         "vram_gb": 24,
+        "disk_gb": 25,
         "min_gpu": "RTX 3090",
-        "estimated_cost_hr": 0.30,
+        "estimated_cost_hr": 2.55,
     },
 }
 
@@ -169,16 +197,44 @@ class VastAIManager:
     No real API calls — mock/dry-run only.
     """
 
+    # Path where bad-host IDs are persisted across restarts so we don't
+    # re-discover the same broken hosts every time the service starts.
+    _BAD_HOSTS_FILE = Path(os.getenv("IGRIS_DATA_DIR", "/tmp")) / "vastai_bad_hosts.json"
+
     def __init__(self) -> None:
         self._instance: Optional[VastInstance] = None
         self._provision_history: List[Dict[str, Any]] = []
-        # Hosts (by host_id) that caused fatal Docker errors (e.g. storage-opt on ext4).
-        # Skipped in search_offers so we don't keep provisioning the same bad host.
-        self._failed_host_ids: set = set()
+        # Hosts (by host_id) that caused fatal Docker errors (e.g. storage-opt on ext4,
+        # failed containerd task). Skipped in search_offers and persisted to disk so
+        # we don't re-discover broken hosts on every service restart.
+        self._failed_host_ids: set = self._load_bad_hosts()
         # Cleanup orphaned instances from previous service runs in the background.
         # This handles the case where the service restarted while an instance was
         # provisioning or errored — without this, the instance keeps billing.
         self._startup_cleanup()
+
+    def _load_bad_hosts(self) -> set:
+        """Load persisted bad-host blacklist from disk."""
+        try:
+            if self._BAD_HOSTS_FILE.exists():
+                data = json.loads(self._BAD_HOSTS_FILE.read_text())
+                ids = set(data.get("host_ids", []))
+                if ids:
+                    _log.info("vastai: loaded %d bad host(s) from %s", len(ids), self._BAD_HOSTS_FILE)
+                return ids
+        except Exception as exc:
+            _log.warning("vastai: could not load bad hosts file: %s", exc)
+        return set()
+
+    def _save_bad_hosts(self) -> None:
+        """Persist bad-host blacklist to disk."""
+        try:
+            self._BAD_HOSTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            self._BAD_HOSTS_FILE.write_text(
+                json.dumps({"host_ids": sorted(self._failed_host_ids)}, indent=2)
+            )
+        except Exception as exc:
+            _log.warning("vastai: could not save bad hosts file: %s", exc)
 
     # -- Config --
 
@@ -287,6 +343,31 @@ class VastAIManager:
                 host_id = o.get("host_id")
                 if host_id in self._failed_host_ids:
                     continue
+                # Minimum disk space for model files + OS overhead.
+                # ollama/ollama image is ~1GB; model files vary per model (e.g. 19.9GB for 32b).
+                disk_gb = float(o.get("disk_space") or 0)
+                min_disk_gb = float(info.get("disk_gb") or info["vram_gb"] * 1.2)
+                if disk_gb < min_disk_gb:
+                    continue
+                # Skip unreliable hosts (score <0.8 out of 1.0).
+                reliability = float(
+                    o.get("reliability2") or o.get("reliability") or 1.0
+                )
+                if reliability < 0.8:
+                    continue
+                # Require cuda_max_good >= 13.1 to filter out CDI-broken hosts.
+                # Empirically verified (2026-05): all hosts with cuda <= 13.0 fail
+                # with "failed to inject CDI devices: unresolvable CDI devices" because
+                # their NVIDIA Container Device Interface spec has stale GPU device IDs.
+                # Hosts with driver >= 590 (cuda=13.1) have correct CDI or legacy runtime.
+                # Also filters storage-opt failures (GV100, cuda=12.8) and V100 zombie hosts.
+                cuda_ver = float(o.get("cuda_max_good") or 0)
+                if cuda_ver < 13.1:
+                    continue
+                # Note: we do NOT filter on direct_port_start/direct_port_end here because
+                # those fields are None in /bundles/ search results for all hosts (they are
+                # only populated on running instances).  V100 zombie hosts (broken agent)
+                # are caught at polling time by the zombie-host detector in _poll_until_ready.
                 if gpu_ram_mb >= vram_mb and dph <= max_cost and is_rentable:
                     offers.append({
                         "id": o.get("id"),
@@ -295,7 +376,9 @@ class VastAIManager:
                         "vram_gb": round(gpu_ram_mb / 1024, 1),
                         "cost_per_hour": round(dph, 4),
                         "num_gpus": o.get("num_gpus", 1),
-                        "cuda": o.get("cuda_max_good", "?"),
+                        "cuda": round(cuda_ver, 1),
+                        "reliability": round(reliability, 2),
+                        "disk_gb": round(disk_gb, 0),
                         "region": o.get("geolocation", "?"),
                         "available": True,
                     })
@@ -393,10 +476,13 @@ class VastAIManager:
                 cfg.api_key,
                 payload={
                     "client_id": "me",
-                    "image": "pytorch/pytorch:latest",
+                    # ollama/ollama has Ollama pre-installed — no curl download needed.
+                    # Avoids the outbound-internet dependency that caused ubuntu:22.04+curl
+                    # to silently fail (Ollama never started → connection refused forever).
+                    "image": "ollama/ollama",
                     # "ssh_direct" = direct SSH (faster), correct Vast.ai API value.
                     "runtype": "ssh_direct",
-                    "disk": 10,
+                    "disk": 25,   # deepseek-r1:32b model is ~19.9 GB
                     "label": f"igris-{model.replace(':','-')}",
                 },
             )
@@ -518,33 +604,31 @@ class VastAIManager:
                 cfg.api_key,
                 payload={
                     "client_id": "me",
-                    # Ollama official image; starts server on port 11434
-                    "image": "ollama/ollama:latest",
-                    # "ssh_direct" is the correct runtype for SSH (not "ssh").
-                    # "ssh" is not a valid value per Vast.ai API docs; valid values are:
-                    # ssh_direct, ssh_proxy, jupyter_direct, jupyter_proxy, args.
+                    # ollama/ollama has Ollama pre-installed — no curl install needed.
+                    # Root cause of previous failures: ubuntu:22.04 + curl install failed
+                    # silently because the container has no outbound internet access, so
+                    # ollama was never installed → connection refused for the full 20 min
+                    # timeout. Switching to ollama/ollama eliminates the curl dependency.
+                    # RTX 3090 / RTX 5090 / H100 still fail with "failed to create
+                    # containerd task" (host-level containerd bug, unrelated to image).
+                    # Only RTX PRO 6000 WS hosts reliably start containers.
+                    "image": "ollama/ollama",
                     "runtype": "ssh_direct",
-                    # disk=10 is the Vast.ai default.  Passing it explicitly avoids any
-                    # ambiguity; Vast.ai always applies --storage-opt size=Xg regardless,
-                    # so ext4 hosts will always fail.  We handle this in _poll_until_ready
-                    # (delete on storage-opt error) and blacklist the host in _failed_host_ids.
-                    "disk": 10,
+                    "disk": 25,   # deepseek-r1:32b model is ~19.9 GB
                     "label": f"igris-orchestrator-{model.replace(':', '-')}",
-                    # Port mapping MUST be in the "env" field using Docker -p syntax.
-                    # The "ports" top-level key is NOT a valid API field.
                     "env": {
-                        # Bind Ollama to all interfaces so it's reachable externally.
-                        "OLLAMA_HOST": "0.0.0.0:11434",
-                        # Expose port 11434 to the outside (required for TCP probe).
                         "-p 11434:11434": "1",
+                        # Bind Ollama to all interfaces so the host-mapped port is reachable.
+                        "OLLAMA_HOST": "0.0.0.0",
                     },
-                    # Pull model on startup so it's ready for first inference.
-                    # ollama/ollama:latest entrypoint is replaced by ssh_direct, so we
-                    # must start ollama manually here.
+                    # In ssh_direct mode Vast.ai replaces the image ENTRYPOINT with sshd.
+                    # The onstart script runs post-boot inside the container shell.
+                    # ollama binary is already in PATH (baked into the image), so we only
+                    # need to start the serve process. nohup ensures it survives when the
+                    # onstart shell exits (sets SIG_IGN for SIGHUP before exec).
                     "onstart": (
-                        "ollama serve &>/var/log/ollama.log & "
-                        "sleep 15 && "
-                        f"ollama pull {model} &>/var/log/ollama_pull.log"
+                        "nohup env OLLAMA_HOST=0.0.0.0 ollama serve "
+                        ">/var/log/ollama.log 2>&1 &"
                     ),
                 },
             )
@@ -597,9 +681,20 @@ class VastAIManager:
         max_wait: int = 600,
         poll_interval: int = 20,
     ) -> None:
-        """Background thread: poll Vast.ai until instance is running and Ollama responds."""
+        """Background thread: poll Vast.ai until instance is running and Ollama responds.
+
+        Zombie-host detection (V100 pattern):
+          If cur_state='running' but actual_status=None persists for >5 consecutive
+          polls, the host's Vast.ai daemon is broken — it starts the container but
+          never reports status back to the control plane. Vast.ai docs: actual_status
+          is set by the host agent; with a dead agent it stays null indefinitely.
+          Fix: blacklist the host and destroy — no client-side recovery possible.
+        """
         deadline = time.time() + max_wait
         _log.info("vastai poll started: instance_id=%s max_wait=%ds", instance_id, max_wait)
+        # Count consecutive polls where cur_state=running but actual_status=None
+        _zombie_polls = 0
+        _ZOMBIE_THRESHOLD = 5  # ~100s with poll_interval=20
 
         while time.time() < deadline:
             time.sleep(poll_interval)
@@ -610,7 +705,38 @@ class VastAIManager:
                 inst = instances[0] if isinstance(instances, list) and instances else data
 
                 actual_status = inst.get("actual_status", "")
-                _log.debug("vastai poll: instance_id=%s status=%s", instance_id, actual_status)
+                cur_state = inst.get("cur_state", "")
+                _log.debug(
+                    "vastai poll: instance_id=%s cur_state=%s actual_status=%s",
+                    instance_id, cur_state, actual_status,
+                )
+
+                # Zombie-host detection: cur_state=running but actual_status stays null.
+                # Confirmed on Tesla V100 (host 166.113.48.43) — Vast.ai host agent
+                # is broken/stale, the container starts but monitoring never works.
+                # Ports also stay null because port-proxy setup requires a working agent.
+                if cur_state == "running" and actual_status is None:
+                    _zombie_polls += 1
+                    if _zombie_polls >= _ZOMBIE_THRESHOLD:
+                        _bad_host = host_id or inst.get("host_id")
+                        if _bad_host is not None:
+                            self._failed_host_ids.add(_bad_host)
+                            self._save_bad_hosts()
+                        _log.warning(
+                            "vastai poll: zombie host detected — instance_id=%s "
+                            "cur_state=running but actual_status=None for %d polls "
+                            "— host agent is broken (host_id=%s). Destroying.",
+                            instance_id, _zombie_polls, _bad_host,
+                        )
+                        try:
+                            _vastai_request("DELETE", f"/instances/{instance_id}/", api_key)
+                        except Exception as _del_exc:
+                            _log.warning("vastai poll: DELETE failed for %s: %s", instance_id, _del_exc)
+                        if self._instance and self._instance.instance_id == instance_id:
+                            self._instance.status = "destroyed"
+                        return
+                else:
+                    _zombie_polls = 0  # reset counter on any status change
 
                 if actual_status == "running":
                     ssh_host = inst.get("ssh_host", "")
@@ -658,6 +784,7 @@ class VastAIManager:
                     _bad_host = host_id or inst.get("host_id")
                     if _bad_host is not None:
                         self._failed_host_ids.add(_bad_host)
+                        self._save_bad_hosts()
                     # Actually terminate the instance on Vast.ai so it stops billing.
                     try:
                         _vastai_request("DELETE", f"/instances/{instance_id}/", api_key)
@@ -668,10 +795,12 @@ class VastAIManager:
                         self._instance.status = "destroyed"
                     return
 
-                elif actual_status in ("loading", None, ""):
-                    # Check if Docker reported an error in status_msg (e.g. storage-opt
-                    # error on ext4 hosts).  These never transition to "error" — they
-                    # stay in "loading" until we explicitly kill them.
+                elif actual_status in ("loading", "created", None, ""):
+                    # Check if Docker reported an error in status_msg.
+                    # Hosts with broken CDI spec get status "created" (not "loading")
+                    # with the CDI error in status_msg — they never self-recover.
+                    # Hosts with storage-opt issues stay "loading".
+                    # Neither transitions to "error" — must be explicitly killed.
                     status_msg = inst.get("status_msg") or ""
                     _FATAL_MSG_PATTERNS = (
                         "storage-opt",
@@ -679,12 +808,19 @@ class VastAIManager:
                         "OCI runtime",
                         "no space left",
                         "permission denied",
+                        # CDI (Container Device Interface) errors — stale GPU device spec
+                        # on nvidia-container-toolkit.  Host must run: nvidia-ctk cdi generate
+                        "unresolvable CDI devices",
+                        "failed to inject CDI",
+                        "failed to create task",
                     )
                     if any(p in status_msg for p in _FATAL_MSG_PATTERNS):
-                        # Blacklist this host so we don't provision on it again.
+                        # Blacklist this host so we don't provision on it again,
+                        # and persist to disk so restarts don't re-discover it.
                         _bad_host = host_id or inst.get("host_id")
                         if _bad_host is not None:
                             self._failed_host_ids.add(_bad_host)
+                            self._save_bad_hosts()
                             _log.info(
                                 "vastai poll: blacklisted host_id=%s due to fatal Docker error",
                                 _bad_host,
@@ -740,8 +876,10 @@ class VastAIManager:
                     _FATAL_PATTERNS = (
                         "storage-opt", "Error response from daemon",
                         "OCI runtime", "no space left", "permission denied",
+                        "unresolvable CDI devices", "failed to inject CDI",
+                        "failed to create task",
                     )
-                    loading_with_error = actual_status in ("loading", None) and any(
+                    loading_with_error = actual_status in ("loading", "created", None) and any(
                         p in status_msg for p in _FATAL_PATTERNS
                     )
                     # actual_status=None (JSON null) means Vast.ai hasn't assigned a status

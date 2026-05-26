@@ -63,3 +63,14 @@ The **Git** tab in the agentic console provides:
 4. **Create commit proposal** — Preview what would be committed
 5. **Stage and commit manually** — Use terminal or external tools
 6. **Generate PR summary** — Get commit list and diffstat for PR description
+
+## Alignment Rule (Local ↔ GitHub)
+
+Every completed intervention must end with local and GitHub states aligned.
+
+Checklist:
+- Commit all intended local changes.
+- Push branch to GitHub.
+- Open/update PR (or merge directly according to repo policy).
+- Confirm `git status` is clean locally.
+- Confirm remote branch contains the same commit SHA.
