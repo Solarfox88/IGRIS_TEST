@@ -852,8 +852,25 @@ def main() -> None:
     )
     # DeepSeek quality boost: one deterministic refinement pass for weak outputs.
     if provider == "deepseek" and isinstance(result, dict):
-        quality_floor = float(os.environ.get("IGRIS_DEEPSEEK_QUALITY_FLOOR", "0.90"))
-        max_passes = int(os.environ.get("IGRIS_DEEPSEEK_QUALITY_PASSES", "2"))
+        model_l = model.lower()
+        is_flash = "flash" in model_l
+        default_floor = "0.92" if is_flash else "0.94"
+        default_passes = "2"
+        floor_env = "IGRIS_DEEPSEEK_FLASH_QUALITY_FLOOR" if is_flash else "IGRIS_DEEPSEEK_PRO_QUALITY_FLOOR"
+        passes_env = "IGRIS_DEEPSEEK_FLASH_QUALITY_PASSES" if is_flash else "IGRIS_DEEPSEEK_PRO_QUALITY_PASSES"
+        # Priority: model-specific env > global env > model default.
+        quality_floor = float(
+            os.environ.get(
+                floor_env,
+                os.environ.get("IGRIS_DEEPSEEK_QUALITY_FLOOR", default_floor),
+            )
+        )
+        max_passes = int(
+            os.environ.get(
+                passes_env,
+                os.environ.get("IGRIS_DEEPSEEK_QUALITY_PASSES", default_passes),
+            )
+        )
         applied = False
         for _ in range(max(0, max_passes)):
             if _passes_quality_gate(result, quality_floor):
