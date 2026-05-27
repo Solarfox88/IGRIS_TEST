@@ -3274,6 +3274,26 @@ class SelfRepairSupervisor:
                     outcomes_path=_outcomes_path,
                 )
                 assignment_decision = _router.decide(_req)
+                forced_planner_profile = str(
+                    os.getenv("IGRIS_ROLE_PLANNER_PROFILE", "mini_execution")
+                ).strip() or "mini_execution"
+                if (
+                    assignment_decision is not None
+                    and str(getattr(assignment_decision, "task_type", "")) == "memory_system"
+                    and forced_planner_profile
+                ):
+                    prev_profile = str(getattr(assignment_decision, "preferred_profile", "") or "")
+                    if prev_profile != forced_planner_profile:
+                        assignment_decision.preferred_profile = forced_planner_profile
+                        run.add(
+                            "assignment_routing_override",
+                            "success",
+                            f"Planner profile override applied for initial rank path: "
+                            f"{prev_profile or 'unset'} -> {forced_planner_profile}",
+                            task_type=str(getattr(assignment_decision, "task_type", "")),
+                            previous_profile=prev_profile,
+                            forced_profile=forced_planner_profile,
+                        )
                 run.add(
                     "assignment_routing",
                     "success",
@@ -5497,11 +5517,19 @@ class SelfRepairSupervisor:
             max_steps=PLANNING_MAX_STEPS,
             timeout_seconds=PLANNING_TIMEOUT_SECONDS,
         )
+        planner_profile = str(
+            os.getenv("IGRIS_ROLE_PLANNER_PROFILE", "mini_execution")
+        ).strip() or "mini_execution"
+        planner_task_type = str(
+            os.getenv("IGRIS_ROLE_PLANNER_TASK_TYPE", "code_reasoning")
+        ).strip() or "code_reasoning"
         result = self.backend.run_reasoning(
             planning_goal,
             max_steps=PLANNING_MAX_STEPS,
             initial_context={"read_only": True, "planning_pass": True},
             timeout=PLANNING_TIMEOUT_SECONDS,
+            task_type=planner_task_type,
+            preferred_profile=planner_profile,
         )
         raw = _safe_redact(
             result.get("final_summary") or result.get("output") or ""
@@ -5526,6 +5554,8 @@ class SelfRepairSupervisor:
         )
         run.mission_scope = scope
         run.report["mission_scope"] = scope
+        run.report["mission_planning_profile"] = planner_profile
+        run.report["mission_planning_task_type"] = planner_task_type
 
         # M3 — Model-aware escalation: when the local model says the mission is
         # high-complexity AND the operator has configured API escalation, ask the
