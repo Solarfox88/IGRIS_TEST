@@ -1,10 +1,14 @@
 import json
+import os
+import shutil
 import subprocess
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict
 
+import pytest
 from fastapi.testclient import TestClient
 
 from igris.core.self_repair_supervisor import (
@@ -31,6 +35,30 @@ from igris.core.self_repair_supervisor import (
     _reconcile_run_records,
 )
 from igris.web.server import create_app
+
+
+@pytest.fixture(autouse=True)
+def _clean_tmp_project():
+    """Issue #731 — tests share /tmp/project as a fixed path.
+
+    Previous supervisor runs leave stale files (.igris/baseline_cache.json,
+    .igris/supervisor_runs.json, tests/test_rank_status.py, rank_pending.patch,
+    etc.) that bleed between tests and cause non-deterministic baseline cache
+    hits and stale-patch warnings.
+
+    This fixture clears the relevant directories BEFORE and AFTER each test.
+    """
+    _TMP = Path("/tmp/project")
+
+    def _clean():
+        for sub in (".igris", "tests"):
+            target = _TMP / sub
+            if target.exists():
+                shutil.rmtree(str(target), ignore_errors=True)
+
+    _clean()
+    yield
+    _clean()
 
 
 class FakeBackend:
@@ -216,6 +244,10 @@ def _config(**overrides):
         # Semantic gate disabled by default — most tests use simplified diffs and
         # test orchestration behavior, not implementation quality.
         "enable_semantic_gate": False,
+        # Issue #731 — always bypass baseline cache in tests so that the
+        # full_tests list is consumed predictably and there are no stale-cache
+        # hits from previous test runs sharing /tmp/project.
+        "force_revalidate_baseline": True,
     }
     data.update(overrides)
     return RankSupervisorConfig.from_dict(data)
@@ -1455,6 +1487,7 @@ def test_supervisor_deduplicates_repair_issue_for_same_failure_in_single_run():
             allow_merge_if_green=False,
             max_rank_attempts=2,
             max_repair_cycles=2,
+            allow_auto_subissues=False,  # Test focuses on repair_issue dedup, not decomposition
         )
     )
 

@@ -3769,8 +3769,12 @@ class SelfRepairSupervisor:
             final_smoke = CommandResult(True, "Final smoke skipped")
             failure = stage_failure or ""
             if not failure:
+                # Issue #731 — gate is only active when enable_semantic_gate=True.
+                # Disabling the semantic gate (e.g. in tests) skips both the
+                # pre-apply quality gate and the post-reasoning acceptance gate.
                 should_gate = (
-                    (reasoning_status == "finished" or stop_reason == "finish")
+                    config.enable_semantic_gate
+                    and (reasoning_status == "finished" or stop_reason == "finish")
                     and (bool(modified_files) or bool((diff.output or "").strip()))
                 )
                 if should_gate:
@@ -6945,7 +6949,7 @@ class SelfRepairSupervisor:
         if not _assignment_router_available or assignment_decision is None:
             return
         try:
-            outcomes_path = str(project_root / ".igris" / "assignment_outcomes.json")
+            outcomes_path = str(Path(project_root) / ".igris" / "assignment_outcomes.json")
             total_cost = run.execution_budget_used_usd + run.api_budget_used_usd
             attempts = run.repair_cycles_used + 1
             cost_per_success = (
