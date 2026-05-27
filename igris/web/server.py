@@ -504,6 +504,9 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(title="IGRIS_GPT", version="0.1.0", lifespan=_lifespan)
+    # Issue #727 — security: CORS restriction, API-key auth, rate limiting
+    from igris.web.security import apply_security_middleware
+    apply_security_middleware(app)
     _graph_instance: Optional[MemoryGraph] = None
     def _get_graph() -> MemoryGraph:
         nonlocal _graph_instance
