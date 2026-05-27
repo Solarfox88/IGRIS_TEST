@@ -13,6 +13,7 @@ from igris.agent.mission.mission_orchestrator import run_mission_pipeline
 from igris.agent.mission.anti_loop import (
     MissionLoopState,
     classify_mission_family,
+    semantic_group_for_mission,
     semantic_key_for_mission,
     evaluate_loop_state,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "run_mission_pipeline",
     "MissionLoopState",
     "classify_mission_family",
+    "semantic_group_for_mission",
     "semantic_key_for_mission",
     "evaluate_loop_state",
 ]
