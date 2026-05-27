@@ -1,0 +1,159 @@
+{
+  "baseline_source": "reports/mission_brain/768/mission_brain_validation_768.json",
+  "before": {
+    "epic": 768,
+    "total_scenarios": 10,
+    "passed": 3,
+    "partial": 1,
+    "failed": 6,
+    "avg_checklist_concreteness": 100.0,
+    "quality_gate_pass_rate": 0.4,
+    "satisfaction_gate_pass_rate": 0.3,
+    "mvp_maturity_decision": "partial",
+    "semantic_key_reference": "a77400baf608",
+    "prioritized_remediation_backlog": [
+      "Improve intent decomposition depth (what/where/why extraction).",
+      "Strengthen satisfaction gate semantics beyond token heuristics.",
+      "Add richer semantic-key normalization and embedding-based duplicate detection.",
+      "Integrate execution adapter with real command safety policy and retry differentiators."
+    ]
+  },
+  "after": {
+    "epic": 768,
+    "total_scenarios": 10,
+    "passed": 6,
+    "partial": 4,
+    "failed": 0,
+    "avg_checklist_concreteness": 100.0,
+    "quality_gate_pass_rate": 0.7,
+    "satisfaction_gate_pass_rate": 0.9,
+    "mvp_maturity_decision": "passed",
+    "semantic_key_reference": "d7d646147092",
+    "prioritized_remediation_backlog": [
+      "Improve intent decomposition depth (what/where/why extraction).",
+      "Strengthen satisfaction gate semantics beyond token heuristics.",
+      "Add richer semantic-key normalization and embedding-based duplicate detection.",
+      "Integrate execution adapter with real command safety policy and retry differentiators."
+    ]
+  },
+  "delta": {
+    "passed": 3,
+    "partial": 3,
+    "failed": -6,
+    "quality_gate_pass_rate": 0.3,
+    "satisfaction_gate_pass_rate": 0.6
+  },
+  "scenario_deltas": [
+    {
+      "scenario_id": 1,
+      "title": "simple_request",
+      "before": "failed",
+      "after": "partial",
+      "changed": true,
+      "quality_before": false,
+      "quality_after": false,
+      "satisfaction_before": false,
+      "satisfaction_after": true
+    },
+    {
+      "scenario_id": 2,
+      "title": "multi_step_request",
+      "before": "failed",
+      "after": "passed",
+      "changed": true,
+      "quality_before": false,
+      "quality_after": true,
+      "satisfaction_before": false,
+      "satisfaction_after": true
+    },
+    {
+      "scenario_id": 3,
+      "title": "multi_file_change",
+      "before": "failed",
+      "after": "passed",
+      "changed": true,
+      "quality_before": false,
+      "quality_after": true,
+      "satisfaction_before": false,
+      "satisfaction_after": true
+    },
+    {
+      "scenario_id": 4,
+      "title": "bug_diagnosis",
+      "before": "passed",
+      "after": "passed",
+      "changed": false,
+      "quality_before": true,
+      "quality_after": true,
+      "satisfaction_before": true,
+      "satisfaction_after": true
+    },
+    {
+      "scenario_id": 5,
+      "title": "architecture_request",
+      "before": "passed",
+      "after": "passed",
+      "changed": false,
+      "quality_before": true,
+      "quality_after": true,
+      "satisfaction_before": true,
+      "satisfaction_after": true
+    },
+    {
+      "scenario_id": 6,
+      "title": "ambiguous_request",
+      "before": "failed",
+      "after": "passed",
+      "changed": true,
+      "quality_before": false,
+      "quality_after": true,
+      "satisfaction_before": false,
+      "satisfaction_after": true
+    },
+    {
+      "scenario_id": 7,
+      "title": "technical_failure_path",
+      "before": "failed",
+      "after": "partial",
+      "changed": true,
+      "quality_before": false,
+      "quality_after": false,
+      "satisfaction_before": false,
+      "satisfaction_after": true
+    },
+    {
+      "scenario_id": 8,
+      "title": "technical_pass_intent_fail",
+      "before": "partial",
+      "after": "partial",
+      "changed": false,
+      "quality_before": true,
+      "quality_after": true,
+      "satisfaction_before": false,
+      "satisfaction_after": false
+    },
+    {
+      "scenario_id": 9,
+      "title": "semantic_loop_case",
+      "before": "passed",
+      "after": "passed",
+      "changed": false,
+      "quality_before": true,
+      "quality_after": true,
+      "satisfaction_before": true,
+      "satisfaction_after": true
+    },
+    {
+      "scenario_id": 10,
+      "title": "escalation_teacher_case",
+      "before": "failed",
+      "after": "partial",
+      "changed": true,
+      "quality_before": false,
+      "quality_after": false,
+      "satisfaction_before": false,
+      "satisfaction_after": true
+    }
+  ],
+  "final_decision": "remediation successful"
+}
