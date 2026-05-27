@@ -8414,3 +8414,94 @@ def test_run_report_includes_telemetry_after_blocked():
     assert "no_diff_rate" in run.report, "run.report must include no_diff_rate"
     assert "attempt_outcomes" in run.report, "run.report must include attempt_outcomes"
     assert isinstance(run.report["attempt_outcomes"], list)
+
+
+# ---------------------------------------------------------------------------
+# Issue #722 — zombie 'running' runs marked 'interrupted' on startup
+# Issue #733 — rank_pending.patch cleaned up on blocked runs and startup
+# ---------------------------------------------------------------------------
+
+def test_startup_cleanup_zombie_runs_marks_interrupted(tmp_path):
+    """Runs stuck as 'running' are marked 'interrupted' on supervisor init (#722)."""
+    import json, time as _time
+    from igris.core.self_repair_supervisor import SelfRepairSupervisor, SupervisorRun, RUN_STORE
+
+    # Write fake runs_index with two zombie running runs
+    runs_path = tmp_path / ".igris" / "supervisor_runs.json"
+    runs_path.parent.mkdir(parents=True, exist_ok=True)
+    zombie1 = {"run_id": "zombie-1", "rank_id": "R1", "status": "running", "pid": 99999999, "events": []}
+    zombie2 = {"run_id": "zombie-2", "rank_id": "R2", "status": "cancelling", "pid": 88888888, "events": []}
+    alive = {"run_id": "alive-1", "rank_id": "R3", "status": "completed", "pid": 12345, "events": []}
+    runs_path.write_text(json.dumps({"runs": {
+        "zombie-1": zombie1,
+        "zombie-2": zombie2,
+        "alive-1": alive,
+    }}), encoding="utf-8")
+
+    RUN_STORE.clear()
+    supervisor = SelfRepairSupervisor(str(tmp_path))
+
+    updated = json.loads(runs_path.read_text())["runs"]
+    assert updated["zombie-1"]["status"] == "interrupted", "zombie-1 must be interrupted"
+    assert updated["zombie-2"]["status"] == "interrupted", "zombie-2 must be interrupted"
+    assert updated["alive-1"]["status"] == "completed", "completed run must not be touched"
+
+    # interrupted_at timestamp must be set
+    assert "interrupted_at" in updated["zombie-1"]
+    assert "interrupted_at" in updated["zombie-2"]
+
+
+def test_startup_cleanup_zombie_runs_does_not_touch_current_pid(tmp_path):
+    """Runs owned by current PID are not marked interrupted (#722)."""
+    import json, os as _os
+    from igris.core.self_repair_supervisor import SelfRepairSupervisor, RUN_STORE
+
+    runs_path = tmp_path / ".igris" / "supervisor_runs.json"
+    runs_path.parent.mkdir(parents=True, exist_ok=True)
+    current = {"run_id": "mine-1", "rank_id": "R1", "status": "running", "pid": _os.getpid(), "events": []}
+    runs_path.write_text(json.dumps({"runs": {"mine-1": current}}), encoding="utf-8")
+
+    RUN_STORE.clear()
+    SelfRepairSupervisor(str(tmp_path))
+
+    updated = json.loads(runs_path.read_text())["runs"]
+    # Run owned by current process must NOT be interrupted
+    assert updated["mine-1"]["status"] == "running", "current-process run must stay 'running'"
+
+
+def test_startup_cleanup_stale_patch_deleted(tmp_path):
+    """Stale rank_pending.patch is deleted on supervisor init (#733)."""
+    from igris.core.self_repair_supervisor import SelfRepairSupervisor, RUN_STORE
+
+    patch_path = tmp_path / ".igris" / "rank_pending.patch"
+    patch_path.parent.mkdir(parents=True, exist_ok=True)
+    patch_path.write_text("diff --git a/f b/f\n+fix", encoding="utf-8")
+
+    assert patch_path.exists()
+
+    RUN_STORE.clear()
+    SelfRepairSupervisor(str(tmp_path))
+
+    assert not patch_path.exists(), "rank_pending.patch must be deleted on startup"
+
+
+def test_blocked_run_removes_pending_patch(tmp_path):
+    """_blocked() deletes rank_pending.patch so it doesn't persist between runs (#733)."""
+    from igris.core.self_repair_supervisor import SelfRepairSupervisor, SupervisorRun, RUN_STORE
+
+    patch_path = tmp_path / ".igris" / "rank_pending.patch"
+    patch_path.parent.mkdir(parents=True, exist_ok=True)
+    patch_path.write_text("diff --git a/f b/f\n+fix", encoding="utf-8")
+
+    RUN_STORE.clear()
+    supervisor = SelfRepairSupervisor(str(tmp_path))
+
+    # Recreate patch (startup cleanup already deleted it, simulate mid-run patch)
+    patch_path.write_text("diff --git a/f b/f\n+fix", encoding="utf-8")
+
+    run = SupervisorRun(run_id="block-test", rank_id="R1")
+    supervisor._blocked(run, "test_failure", "Simulated failure for patch cleanup test")
+
+    assert not patch_path.exists(), "rank_pending.patch must be deleted by _blocked()"
+    # patch_cleanup event should be in run events
+    assert any(e.phase == "patch_cleanup" for e in run.events), "patch_cleanup event missing"

@@ -8,6 +8,7 @@ backend runs fixed argv commands only, and tests can inject a fake backend.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import re
@@ -1781,6 +1782,60 @@ class SelfRepairSupervisor:
         self._failure_memory = FailureMemory(
             store_path=Path(project_root) / ".igris" / "failure_patterns.json"
         )
+        # Issue #722 — mark zombie 'running' runs as 'interrupted' on startup
+        self._startup_cleanup_zombie_runs()
+        # Issue #733 — delete stale rank_pending.patch left by a crashed run
+        self._startup_cleanup_stale_patch()
+
+    def _startup_cleanup_zombie_runs(self) -> None:
+        """Mark any run with status='running' as 'interrupted' on supervisor init.
+
+        When the server restarts, runs that were active at shutdown are stuck
+        forever as 'running'.  We detect them here by checking that their PID
+        is not the current process (or has no PID at all) and transition them
+        to 'interrupted' so the UI is not misleading.  (Issue #722)
+        """
+        _logger = logging.getLogger("igris.supervisor.startup")
+        current_pid = os.getpid()
+        interrupted_ids = []
+        with self._runs_lock:
+            for run_id, record in self._runs_index.items():
+                status = str(record.get("status", "")).strip().lower()
+                if status not in ("running", "cancelling"):
+                    continue
+                run_pid = record.get("pid")
+                if run_pid is not None and int(run_pid) == current_pid:
+                    continue  # Started by this process — still live
+                record["status"] = "interrupted"
+                record["interrupted_at"] = time.time()
+                record.setdefault("events", []).append({
+                    "phase": "startup_cleanup",
+                    "status": "interrupted",
+                    "detail": f"Run was stuck as '{status}' on server restart; marked interrupted.",
+                    "ts": time.time(),
+                })
+                interrupted_ids.append(run_id)
+            if interrupted_ids:
+                self._persist_runs_index()
+        if interrupted_ids:
+            _logger.warning(
+                "Startup cleanup: %d zombie run(s) marked interrupted: %s",
+                len(interrupted_ids), interrupted_ids,
+            )
+
+    def _startup_cleanup_stale_patch(self) -> None:
+        """Delete rank_pending.patch left over from a crashed run.  (Issue #733)"""
+        _logger = logging.getLogger("igris.supervisor.startup")
+        patch_path = Path(self.project_root) / ".igris" / "rank_pending.patch"
+        if patch_path.exists():
+            try:
+                patch_path.unlink()
+                _logger.warning(
+                    "Startup cleanup: removed stale rank_pending.patch "
+                    "(leftover from previous crashed run)."
+                )
+            except OSError as exc:
+                _logger.warning("Startup cleanup: could not remove stale patch: %s", exc)
 
     def _load_audit_index(self) -> Dict[str, Dict[str, Any]]:
         try:
@@ -6814,6 +6869,14 @@ class SelfRepairSupervisor:
         run.report.update(self._api_escalation_report_fragment(run))
         run.report.update(self._stage_report_fragment(mission_plan, stage_statuses))
         run.touch()
+        # Issue #733 — ensure rank_pending.patch is cleaned up on any blocked/failure path
+        try:
+            _stale_patch = Path(self.project_root) / ".igris" / "rank_pending.patch"
+            if _stale_patch.exists():
+                _stale_patch.unlink(missing_ok=True)
+                run.add("patch_cleanup", "success", "rank_pending.patch removed on blocked run")
+        except Exception:
+            pass
         # Record capability-related failures so future runs can learn from history.
         # Skip infrastructure/baseline failures — they're environment issues, not
         # capability limits, and would pollute similarity matching.
