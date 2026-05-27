@@ -1,0 +1,45 @@
+{
+  "epic": 789,
+  "linked_context": [746, 768, 778],
+  "mission_selection_requirements": {
+    "simple": 2,
+    "multi_step": 2,
+    "multi_file": 1,
+    "diagnosis": 1,
+    "architecture": 1,
+    "ambiguous": 1,
+    "failure_prone": 1,
+    "intent_mismatch_risk": 1
+  },
+  "classification_rules": {
+    "completed": "required outcomes achieved, no blocking quality/satisfaction gaps, manual review aligned",
+    "partial": "usable progress exists but unresolved gaps remain",
+    "failed": "observable objective outcome not achieved or unusable"
+  },
+  "critical_false_completed_definition": "declared completed but outcome mismatch can cause wrong operational decision, hidden production risk, or lost rollback/debug traceability",
+  "manual_review_criteria": [
+    "outcome correctness vs intent",
+    "evidence sufficiency",
+    "next-step decision usefulness",
+    "risk visibility"
+  ],
+  "final_decision_rules": {
+    "integrate_deeper": {
+      "critical_false_completed_count_eq": 0,
+      "false_completed_allowed_only_if_non_critical_and_explained": true,
+      "requires_useful_partials": true,
+      "requires_coherent_failures": true,
+      "requires_decision_useful_reports": true,
+      "requires_no_severe_operational_regressions": true,
+      "requires_total_missions_gte": 10
+    },
+    "keep_wrapper": "system useful with no critical false completed but reliability not sufficient for deep integration",
+    "remediate_again": [
+      "critical_false_completed_count >= 1",
+      "gate judgments not explainable",
+      "reports not decision-useful",
+      "real failures masked"
+    ]
+  }
+}
+

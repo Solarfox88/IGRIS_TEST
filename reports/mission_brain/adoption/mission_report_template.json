@@ -1,0 +1,35 @@
+{
+  "mission_id": "string",
+  "mission_index": 1,
+  "mission_type": "simple|multi_step|multi_file|diagnosis|architecture|ambiguous|failure_prone|intent_mismatch_risk",
+  "user_input": "string",
+  "available_context": {
+    "repo_paths": [],
+    "constraints": [],
+    "notes": ""
+  },
+  "mission_brain_report_path": "string",
+  "declared_status": "completed|partial|failed",
+  "observable_outcome": {
+    "summary": "string",
+    "evidence_links": [],
+    "objective_result": "completed|partial|failed"
+  },
+  "manual_reviewer_judgment": {
+    "alignment": "aligned|partially_aligned|misaligned",
+    "judgment_status": "completed|partial|failed",
+    "notes": ""
+  },
+  "discrepancy_present": false,
+  "discrepancy_cause": "",
+  "false_classification": {
+    "false_completed": false,
+    "critical_false_completed": false,
+    "false_partial": false,
+    "false_failed": false
+  },
+  "recommended_follow_up": "",
+  "runtime_overhead_note": "",
+  "report_usefulness_score": 0.0
+}
+

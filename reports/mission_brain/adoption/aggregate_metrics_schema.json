@@ -1,0 +1,17 @@
+{
+  "total_missions": 0,
+  "completed_count": 0,
+  "partial_count": 0,
+  "failed_count": 0,
+  "false_completed_count": 0,
+  "critical_false_completed_count": 0,
+  "false_partial_count": 0,
+  "false_failed_count": 0,
+  "satisfaction_gate_accuracy": 0.0,
+  "quality_gate_accuracy": 0.0,
+  "manual_review_alignment_rate": 0.0,
+  "average_report_usefulness_score": 0.0,
+  "manual_review_notes": [],
+  "adoption_decision": "integrate deeper|keep wrapper|remediate again"
+}
+
