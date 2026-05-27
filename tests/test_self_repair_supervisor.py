@@ -8505,3 +8505,74 @@ def test_blocked_run_removes_pending_patch(tmp_path):
     assert not patch_path.exists(), "rank_pending.patch must be deleted by _blocked()"
     # patch_cleanup event should be in run events
     assert any(e.phase == "patch_cleanup" for e in run.events), "patch_cleanup event missing"
+
+
+# ---------------------------------------------------------------------------
+# Issue #730 — baseline cache revalidation by age + force_revalidate flag
+# ---------------------------------------------------------------------------
+
+def test_baseline_cache_returns_none_when_stale(tmp_path):
+    """Cache entry older than TTL returns None (triggers re-run)."""
+    import json, time as _time
+    from igris.core.self_repair_supervisor import (
+        _baseline_cache_path, _load_valid_baseline_cache, _save_baseline_cache
+    )
+    # Save a cache entry then manually age it
+    _save_baseline_cache(str(tmp_path), "abc123", policy="strict")
+    path = _baseline_cache_path(str(tmp_path))
+    data = json.loads(path.read_text())
+    data["checked_at"] = _time.time() - 9999  # older than any reasonable TTL
+    path.write_text(json.dumps(data))
+
+    result = _load_valid_baseline_cache(str(tmp_path), "abc123")
+    assert result is None, "Stale cache should return None"
+
+
+def test_baseline_cache_valid_hit_returns_payload(tmp_path):
+    """Fresh cache entry for matching SHA returns the payload."""
+    from igris.core.self_repair_supervisor import (
+        _load_valid_baseline_cache, _save_baseline_cache
+    )
+    import os
+    with __import__("unittest.mock").mock.patch.dict(
+        os.environ, {"IGRIS_BASELINE_CACHE_SECONDS": "3600"}, clear=False
+    ):
+        _save_baseline_cache(str(tmp_path), "freshsha", policy="strict")
+        result = _load_valid_baseline_cache(str(tmp_path), "freshsha")
+    assert result is not None, "Fresh cache hit should return payload"
+    assert result.get("baseline_ok") is True
+
+
+def test_baseline_cache_sha_mismatch_returns_none(tmp_path):
+    """Different SHA → cache miss (returns None)."""
+    from igris.core.self_repair_supervisor import (
+        _load_valid_baseline_cache, _save_baseline_cache
+    )
+    _save_baseline_cache(str(tmp_path), "sha_A", policy="strict")
+    result = _load_valid_baseline_cache(str(tmp_path), "sha_B")
+    assert result is None, "SHA mismatch must return None"
+
+
+def test_force_revalidate_bypasses_fresh_cache(tmp_path):
+    """force_revalidate=True bypasses even a fresh, matching cache entry."""
+    from igris.core.self_repair_supervisor import (
+        _load_valid_baseline_cache, _save_baseline_cache
+    )
+    _save_baseline_cache(str(tmp_path), "freshsha", policy="strict")
+    result = _load_valid_baseline_cache(str(tmp_path), "freshsha", force_revalidate=True)
+    assert result is None, "force_revalidate=True must bypass even a fresh cache"
+
+
+def test_rank_supervisor_config_has_force_revalidate_baseline():
+    """RankSupervisorConfig has force_revalidate_baseline field defaulting to False."""
+    from igris.core.self_repair_supervisor import RankSupervisorConfig
+    cfg = RankSupervisorConfig(goal="test", rank_id="R1")
+    assert hasattr(cfg, "force_revalidate_baseline")
+    assert cfg.force_revalidate_baseline is False
+
+
+def test_force_revalidate_from_dict():
+    """RankSupervisorConfig.from_dict parses force_revalidate_baseline."""
+    from igris.core.self_repair_supervisor import RankSupervisorConfig
+    cfg = RankSupervisorConfig.from_dict({"goal": "test", "force_revalidate_baseline": True})
+    assert cfg.force_revalidate_baseline is True

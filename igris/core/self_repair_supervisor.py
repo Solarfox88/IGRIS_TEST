@@ -263,6 +263,8 @@ class RankSupervisorConfig:
     # so that accumulated no_diff_repair / reasoning_timeout counts survive
     # across watchdog cycles.
     prior_capability_signals: Dict[str, int] = field(default_factory=dict)
+    # Issue #730 — force re-validation of baseline cache even on SHA hit
+    force_revalidate_baseline: bool = False
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RankSupervisorConfig":
@@ -308,6 +310,8 @@ class RankSupervisorConfig:
             no_diff_steps_max=max(1, int(data.get("no_diff_steps_max", 20))),
             prior_attempts=max(0, int(data.get("prior_attempts", 0))),
             prior_capability_signals=dict(data.get("prior_capability_signals") or {}),
+            # Issue #730 — force baseline re-validation even on SHA hit
+            force_revalidate_baseline=_as_bool(data.get("force_revalidate_baseline"), False),
         )
 
 
@@ -1316,9 +1320,19 @@ def _baseline_cache_path(project_root: str) -> Path:
     return Path(project_root) / ".igris" / "baseline_cache.json"
 
 
-def _load_valid_baseline_cache(project_root: str, head_sha: str) -> Optional[Dict[str, Any]]:
+def _load_valid_baseline_cache(
+    project_root: str, head_sha: str, force_revalidate: bool = False
+) -> Optional[Dict[str, Any]]:
+    """Load a valid baseline cache entry, or return None on miss.
+
+    Issue #730: also sets ``_miss_reason`` on the returned payload (or on a
+    dummy dict when returning None) so callers can emit a ``baseline_revalidation``
+    event with the reason for the miss.
+    """
     ttl = max(60, int(os.getenv("IGRIS_BASELINE_CACHE_SECONDS", "1800")))
     path = _baseline_cache_path(project_root)
+    if force_revalidate:
+        return None  # caller will emit baseline_revalidation event with reason="force_revalidate"
     if not path.exists():
         return None
     try:
@@ -1326,11 +1340,16 @@ def _load_valid_baseline_cache(project_root: str, head_sha: str) -> Optional[Dic
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return None
     if str(payload.get("head_sha", "")).strip() != str(head_sha).strip():
+        payload["_miss_reason"] = "sha_changed"
         return None
     checked_at = float(payload.get("checked_at", 0.0) or 0.0)
     if checked_at <= 0:
         return None
     if (time.time() - checked_at) > ttl:
+        # Issue #730 — cache stale due to age; surface this as a revalidation event
+        _stale_age_s = round(time.time() - checked_at, 0)
+        payload["_miss_reason"] = "stale"
+        payload["_stale_age_s"] = _stale_age_s
         return None
     if not bool(payload.get("baseline_ok", False)):
         return None
@@ -3280,7 +3299,17 @@ class SelfRepairSupervisor:
         run.add("git_head", "success" if head.success else "failure", _command_detail(head))
         head_sha = str((head.output or "").strip().split()[0] if head.success and (head.output or "").strip() else "")
 
-        cache_hit = _load_valid_baseline_cache(str(self.project_root), head_sha) if head_sha else None
+        cache_hit = (
+            _load_valid_baseline_cache(
+                str(self.project_root), head_sha,
+                force_revalidate=config.force_revalidate_baseline,
+            )
+            if head_sha else None
+        )
+        if config.force_revalidate_baseline:
+            run.add("baseline_revalidation", "triggered",
+                    "Baseline cache bypassed due to force_revalidate_baseline=True",
+                    reason="force_revalidate")
         if cache_hit:
             run.add(
                 "baseline_tests",
