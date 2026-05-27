@@ -1,0 +1,331 @@
+{
+  "suite": "mission_brain_operational_adoption_792",
+  "protocol_reference": "docs/MISSION_BRAIN_OPERATIONAL_ADOPTION_PROTOCOL.md",
+  "missions_792": [
+    {
+      "mission_id": "M4",
+      "mission_type": "multi_step_request",
+      "issue_number": 776,
+      "issue_title": "Step outcome logger: per ogni step, registra sezioni presenti + outcome",
+      "input": "Verifica in sequenza su issue #776: presenza step outcome logger, tracciamento outcome, e disponibilita evidenze per report operativo.",
+      "available_context": {
+        "issue_url": "https://github.com/Solarfox88/IGRIS_GPT/issues/776",
+        "paths": [
+          "igris/core/integration_layer.py",
+          "igris/core/context_manager.py"
+        ],
+        "category": "multi_step"
+      },
+      "mission_brain_report_path": ".igris/mission_brain/reports/b35a8be0-0e48-4115-a6d4-ab6b76d61938.json",
+      "declared_status": "completed",
+      "observable_outcome": {
+        "quality_gate_passed": true,
+        "satisfaction_gate_passed": true,
+        "execution_results": [
+          {
+            "action_id": "ACT-001",
+            "command": "rg -n \"step outcome|Record step outcome|outcome\" igris/core -S",
+            "returncode": 0,
+            "stdout": "igris/core/outcome_router.py:27:    :param result: A dictionary describing the outcome of the task.  It may\nigris/core/outcome_router.py:86:def route_outcome(report: Dict[str, Any], task_description: str = \"\",\nigris/core/outcome_router.py:88:    \"\"\"Route an execution report outcome and return recommendation.\nigris/core/model_orchestrator.py:12:- Records cost, latency, provider, fallback, outcome\nigris/core/helper_ab_eval.py:452:        if r.get(\"downstream\", {}).get(\"next_run_outcome\", \"unknown\") not in (\"unknown\", None)\nigris/core/helper_ab_eval.py:458:            and r.get(\"downstream\", {}).get(\"next_run_outcome\") in (\"success\", \"improved\")\nigris/core/helper_ab_eval.py:463:            and r.get(\"downstream\", {}).get(\"next_run_outcome\") in (\"success\", \"improved\")\nigris/core/helper_ab_eval.py:534:        \"next_run_outcome\": \"unknown\",\nigris/core/assignment_outcomes.py:1:\"\"\"Persistence layer for AssignmentRouter outcomes.\"\"\"\nigris/core/assignment_outcomes.py:50:def load_assignment_outcomes(path: str) -> List[Dict[str, Any]]:\nigris/core/assignment_outcomes.py:51:    \"\"\"Load outcomes list from JSON file. Returns [] if missing or corrupt.\"\"\"\nigris/core/assignment_outcomes.py:62:def save_assignment_outcome(path: str, record: Dict[str, Any]) -> None:\nigris/core/assignment_outcomes.py:63:    \"\"\"Atomically append a sanitized record to the outcomes file.\"\"\"\nigris/core/assignment_outcomes.py:65:    outcomes = load_assignment_outcomes(path)\nigris/core/assignment_outcomes.py:66:    outcomes.append(safe)\nigris/core/assignment_outcomes.py:67:    _atomic_write(path, outcomes)\nigris/core/memory_analysis.py:187:    remediated_families = {r.family for r in remediations if r.outcome == \"success\"}\nigris/core/memory_analysis.py:201:            if d.outcome == \"success\":\nigris/core/supervisor_reasoning_worker.py:125:    ws.advance_phase(WorkPhase.DELIVER, outcome=\"success\")\nigris/core/memory_graph.py:262:        outcomes = root / \".igris\" / \"assignment_outcomes.json\"\nigris/core/memory_graph.py:263:        if outcomes.exists():\nigris/core/memory_graph.py:264:            for o in json.loads(outcomes.read_text(encoding=\"utf-8\") or \"[]\"):\nigris/core/memory_graph.py:399:            outcome = str(content.get(\"outcome\") or \"\")\nigris/core/memory_graph.py:401:                by_goal.setdefault(goal_key, []).append((row[\"node_id\"], outcome, float(row[\"confidence\"]), tags))\nigris/core/integration_layer.py:19:    6. Decision Memory records every outcome\nigris/core/integration_layer.py:152:               d. Decision Memory records outcome\nigris/core/integration_layer.py:249:            if step.outcome == \"success\":\nigris/core/integration_layer.py:251:            elif step.outcome in (\"failure\", \"error\"):\nigris/core/integration_layer.py:305:        \"\"\"Record step outcome to Decision Memory.\"\"\"\nigris/core/integration_layer.py:307:        if step.outcome == \"success\":\nigris/core/integration_layer.py:313:                outcome=\"success\",\nigris/core/integration_layer.py:317:        elif step.outcome in (\"failure\", \"error\"):\nigris/core/benchmark_ping.py:14:    8. Decision Memory \u2014 record outcomes\nigris/core/benchmark_ping.py:359:                outcome=\"success\",\nigris/core/assignment_router.py:18:from igris.core.assignment_outcomes import (\nigris/core/assignment_router.py:20:    load_assignment_outcomes,\nigris/core/assignment_router.py:21:    save_assignment_outcome,\nigris/core/assignment_router.py:69:    outcomes_path: str = \"\"\nigris/core/assignment_router.py:306:    outcomes: List[Dict],\nigris/core/assignment_router.py:311:        o for o in outcomes\nigris/core/assignment_router.py:317:    successes = sum(1 for o in matching if o.get(\"outcome\") == \"success\")\nigris/core/assignment_router.py:335:    outcomes: List[Dict],\nigris/core/assignment_router.py:341:        o for o in outcomes\nigris/core/assignment_router.py:349:    successes = sum(1 for o in matching if o.get(\"outcome\") == \"success\")\nigris/core/assignment_router.py:556:    def __init__(self, outcomes_path: str = \"\") -> None:\nigris/core/assignment_router.py:557:        self._outcomes_path = outcomes_path\nigris/core/assignment_router.py:562:        outcomes: List[Dict] = []\nigris/core/assignment_router.py:563:        path = request.outcomes_path or self._outcomes_path\nigris/core/assignment_router.py:565:            outcomes = load_assignment_outcomes(path)\nigris/core/assignment_router.py:567:        history_stats = _compute_history_stats(outcomes, agent_role, task_type)\nigris/core/assignment_router.py:579:            profile_stats = _compute_profile_stats(outcomes, agent_role, task_type, cand.profile)\nigris/core/work_session.py:26:    outcome: str = \"\"\nigris/core/work_session.py:65:    def advance_phase(self, phase: WorkPhase, outcome: str = \"success\", notes: str = \"\") -> \"WorkSession\":\nigris/core/work_session.py:70:                p.outcome = outcome\nigris/core/work_session.py:88:            mg.add_node(\"lesson\", {\"session_id\": self.session_id, \"goal\": self.goal[:200], \"files_modified\": (report.files_modified if report else []), \"outcome\": self.status, \"ci_status\": (report.ci_status if report else \"unknown\"), \"pr_url\": (report.pr_url if report else \"\"), \"failure_class\": (report.last_failure_class if report else \"\")}, confidence=0.85)\nigris/core/self_repair_supervisor.py:35:    from igris.core.assignment_outcomes import compute_task_signature, save_assignment_outcome\nigris/core/self_repair_supervisor.py:378:    outcome: str = \"\"\nigris/core/self_repair_supervisor.py:455:            \"outcome\": self.outcome,\nigris/core/self_repair_supervisor.py:1937:            \"outcome\": payload.get(\"outcome\", \"\"),\nigris/core/self_repair_supervisor.py:2350:        attempt_outcomes: List[str],\nigris/core/self_repair_supervisor.py:2359:            \"attempt_outcomes\": list(attempt_outcomes),\nigris/core/self_repair_supervisor.py:3406:                _outcomes_path = str(Path(self.project_root) / \".igris\" / \"assignment_outcomes.json\")\nigris/core/self_repair_supervisor.py:3407:                _router = AssignmentRouter(outcomes_path=_outcomes_path)\nigris/core/self_repair_supervisor.py:3426:                    outcomes_path=_outcomes_path,\nigris/core/self_repair_supervisor.py:3535:        _attempt_outcomes: List[str] = []\nigris/core/self_repair_supervisor.py:4100:                    self._persist_assignment_outcome(run, self.project_root, assignment_decision)\nigris/core/self_repair_supervisor.py:4115:            # Issue #715 \u2014 record per-attempt outcome for telemetry.\nigris/core/self_repair_supervisor.py:4116:            _attempt_outcomes.append(\nigris/core/self_repair_supervisor.py:4139:                    _attempt_outcomes, attempt,\nigris/core/self_repair_supervisor.py:4201:            self._persist_assignment_outcome(run, self.project_root, assignment_decision)\nigris/core/self_repair_supervisor.py:4206:        self._persist_assignment_outcome(run, self.project_root, assignment_decision)\nigris/core/self_repair_supervisor.py:4218:            _attempt_outcomes, max(attempt - 1, 1),\nigris/core/self_repair_supervisor.py:5449:                            run.outcome = \"Blocked\"\nigris/core/self_repair_supervisor.py:5517:        run.outcome = \"Completed\"\nigris/core/self_repair_supervisor.py:5524:                run.outcome = \"Blocked\"\nigris/core/self_repair_supervisor.py:5575:        run.outcome = \"Completed\"\nigris/core/self_repair_supervisor.py:5582:                run.outcome = \"Blocked\"\nigris/core/self_repair_supervisor.py:5700:        run.outcome = \"Cancelled\"\nigris/core/self_repair_supervisor.py:6935:        run.outcome = \"Blocked\"\nigris/core/self_repair_supervisor.py:6972:    def _persist_blocked_outcome(\nigris/core/self_repair_supervisor.py:6977:        self._persist_assignment_outcome(run, self.project_root, assignment_decision)\nigris/core/self_repair_supervisor.py:6980:    def _persist_assignment_outcome(\nigris/core/self_repair_supervisor.py:6985:        \"\"\"Append assignment outcome record for historical learning. No-op if unavailable.\"\"\"\nigris/core/self_repair_supervisor.py:6989:            outcomes_path = str(Path(project_root) / \".igris\" / \"assignment_outcomes.json\")\nigris/core/self_repair_supervisor.py:7006:                \"outcome\": run.status,\nigris/core/self_repair_supervisor.py:7018:            save_assignment_outcome(outcomes_path, record)\nigris/core/self_repair_supervisor.py:7021:            _logging.getLogger(__name__).warning(\"Failed to persist assignment outcome: %s\", exc)\nigris/core/self_repair_supervisor.py:7078:            run.outcome = \"Blocked\"\nigris/core/self_repair_supervisor.py:7317:        \"outcome\": payload.get(\"outcome\", \"\"),\nigris/core/self_repair_supervisor.py:7405:                \"outcome\": str(raw.get(\"outcome\", \"\")),\nigris/core/agent_reasoning_loop.py:102:    outcome: str = \"\"  # success | failure | blocked | skipped\nigris/core/agent_reasoning_loop.py:119:            \"outcome\": self.outcome,\nigris/core/agent_reasoning_loop.py:318:            # Track outcomes\nigris/core/agent_reasoning_loop.py:319:            if step.outcome == \"success\":\nigris/core/agent_reasoning_loop.py:322:            elif step.outcome in (\"failure\", \"error\"):\nigris/core/agent_reasoning_loop.py:326:            elif step.outcome == \"ask_user\" and self._suppress_human_gate():\nigris/core/agent_reasoning_loop.py:327:                step.outcome = \"skipped\"\nigris/core/agent_reasoning_loop.py:328:            elif step.outcome in (\"blocked\", \"finish\", \"ask_user\"):\nigris/core/agent_reasoning_loop.py:329:                result.stop_reason = step.outcome\nigris/core/agent_reasoning_loop.py:330:                if step.outcome == \"finish\":\nigris/core/agent_reasoning_loop.py:332:                elif step.outcome == \"blocked\":\nigris/core/agent_reasoning_loop.py:334:                elif step.outcome == \"ask_user\":\nigris/core/agent_reasoning_loop.py:398:            if prev.get(\"signature\") == sig and prev.get(\"outcome\") == \"success\":\nigris/core/agent_reasoning_loop.py:409:            if prev.get(\"signature\") == sig and prev.get(\"outcome\") == \"success\":\nigris/core/agent_reasoning_loop.py:462:        outcome: str,\nigris/core/agent_reasoning_loop.py:470:            \"outcome\": outcome,\nigris/core/agent_reasoning_loop.py:557:                step.outcome = \"failure\"\nigris/core/agent_reasoning_loop.py:563:                step.outcome = \"failure\"\nigris/core/agent_reasoning_loop.py:582:                step.outcome = \"skipped\" if retryable_read_only else \"blocked\"\nigris/core/agent_reasoning_loop.py:611:                step.outcome = \"skipped\"\nigris/core/agent_reasoning_loop.py:623:                step.outcome = \"failure\"\nigris/core/agent_reasoning_loop.py:635:            step.outcome = \"success\" if exec_result.get(\"success\", False) else \"failure\"\nigris/core/agent_reasoning_loop.py:661:                    step.outcome,\nigris/core/agent_reasoning_loop.py:668:                    step.outcome = \"blocked\"\nigris/core/agent_reasoning_loop.py:683:                step.outcome = \"finish\"\nigris/core/agent_reasoning_loop.py:686:                step.outcome = \"blocked\"\nigris/core/agent_reasoning_loop.py:689:                step.outcome = \"ask_user\"\nigris/core/agent_reasoning_loop.py:701:            step.outcome = \"error\"\nigris/core/decision_memory.py:39:    outcome: str = \"\"  # success | failure | blocked | skipped\nigris/core/decision_memory.py:48:        d[\"outcome\"] = redact_secrets(d.get(\"outcome\", \"\"))\nigris/core/decision_memory.py:112:    outcome: str = \"success\",\nigris/core/decision_memory.py:124:        outcome=outcome,\nigris/core/decision_memory.py:147:        outcome=\"failure\",\nigris/core/decision_memory.py:165:        outcome=\"blocked\",\nigris/core/decision_memory.py:184:    outcome: str = \"pending\",\nigris/core/decision_memory.py:196:        outcome=outcome,\nigris/core/smw_teach.py:19:    outcome: str\nigris/core/smw_teach.py:21:    # Issue #724 \u2014 outcome_label distinguishes positive (resolved) from negative (failed) learning\nigris/core/smw_teach.py:22:    outcome_label: str = \"positive\"  # \"positive\" | \"negative\"\nigris/core/smw_teach.py:63:async def teach_back(incident: Incident, project_root: str, outcome_label: str = \"positive\") -> None:\nigris/core/smw_teach.py:68:    ``outcome_label`` is stored on the incident for downstream weighting.\nigris/core/smw_teach.py:70:    # Attach outcome_label to the incident before persisting\nigris/core/smw_teach.py:71:    if outcome_label in (\"positive\", \"negative\"):\nigris/core/smw_teach.py:79:            outcome=incident.outcome,\nigris/core/smw_teach.py:81:            outcome_label=outcome_label,\nigris/core/smw_teach.py:88:        confidence = 0.8 if outcome_label == \"positive\" else 0.3\nigris/core/smw_teach.py:96:                \"outcome_label\": outcome_label,\nigris/core/tool_result_budget.py:10:    content, outcome = apply_tool_result_budget(raw_output)\nigris/core/tool_result_budget.py:11:    if outcome.truncated:\nigris/core/tool_result_budget.py:12:        log.debug(\"truncated %d \u2192 %d bytes\", outcome.original_bytes, outcome.final_bytes)\nigris/core/meta_watchdog.py:50:                outcome = \"failed\" if still_active else \"resolved\"\nigris/core/meta_watchdog.py:51:                incident = Incident(uuid.uuid4().hex, name, detected.detected_at, None if still_active else asyncio.get_running_loop().time(), d.root_cause, actions_applied, outcome, detected.evidence)\nigris/core/meta_watchdog.py:53:                if outcome == \"resolved\":\nigris/core/meta_watchdog.py:54:                    await teach_back(incident, project_root, outcome_label=\"positive\")\nigris/core/meta_watchdog.py:56:                    # Issue #724 \u2014 teach_back on failed outcomes too (negative label)\nigris/core/meta_watchdog.py:57:                    await teach_back(incident, project_root, outcome_label=\"negative\")\nigris/core/failure_memory.py:134:        gp = self._goal_patterns.setdefault(gk, {\"attempts\": 0, \"outcomes\": [], \"last_seen\": now_str})\nigris/core/failure_memory.py:136:        gp[\"outcomes\"] = list(gp.get(\"outcomes\", []))[-9:] + [failure_class]\nigris/core/context_manager.py:188:            outcome = act.get(\"outcome\", \"unknown\")\nigris/core/context_manager.py:190:            line = f\"Step {step}: {action_type} \u2192 {outcome}\"\nigris/core/context_manager.py:210:        outcome = act.get(\"outcome\", \"unknown\")\nigris/core/context_manager.py:212:        line = f\"Step {step}: {action_type} \u2192 {outcome}\"\nigris/core/decision_report.py:5:safety decisions, outcome, memory constraints, teacher recommendation,\nigris/core/decision_report.py:54:    outcome: str = \"\"\nigris/core/decision_report.py:55:    outcome_reason: str = \"\"\nigris/core/decision_report.py:70:        d[\"outcome_reason\"] = redact_secrets(d.get(\"outcome_reason\", \"\"))\nigris/core/decision_report.py:116:        \"outcome\": report.outcome,\nigris/core/decision_report.py:166:    outcome: str = \"\",\nigris/core/decision_report.py:167:    outcome_reason: str = \"\",\nigris/core/decision_report.py:204:        outcome=outcome,\nigris/core/decision_report.py:205:        outcome_reason=outcome_reason,\nigris/core/mission_controller.py:427:    # -- Report step outcome --\nigris/core/mission_controller.py:429:    def report_step_outcome(\nigris/core/mission_controller.py:433:        outcome: str,  # \"success\" | \"failure\" | \"skipped\"\nigris/core/mission_controller.py:436:        \"\"\"Record the outcome of a step and advance.\"\"\"\nigris/core/mission_controller.py:444:        task[\"status\"] = \"done\" if outcome == \"success\" else \"failed\" if outcome == \"failure\" else \"skipped\"\nigris/core/mission_controller.py:446:        task[\"outcome_detail\"] = redact_secrets(detail)\nigris/core/mission_controller.py:448:        self._log(mission, f\"step_{outcome}\", f\"Step {step_index}: {detail[:200]}\")\nigris/core/mission_controller.py:450:        if outcome == \"failure\":\nigris/core/mission_controller.py:610:                \"outcome_detail\": redact_secrets(t.get(\"outcome_detail\", \"\")),\nigris/core/autonomous_loop.py:6:  or patch proposal -> report -> outcome -> next recommendation\nigris/core/autonomous_loop.py:20:from igris.core.outcome_router import route_outcome\nigris/core/autonomous_loop.py:39:    outcome: str = \"\"  # success | failure | blocked | skipped | stopped\nigris/core/autonomous_loop.py:99:    5. Route outcome\nigris/core/autonomous_loop.py:110:        result.outcome = \"stopped\"\nigris/core/autonomous_loop.py:124:        result.outcome = \"stopped\"\nigris/core/autonomous_loop.py:136:        result.outcome = \"skipped\"\nigris/core/autonomous_loop.py:141:            outcome=\"skipped\", reason=\"high risk\", project_root=pr,\nigris/core/autonomous_loop.py:150:        result.outcome = \"blocked\"\nigris/core/autonomous_loop.py:156:            outcome=\"blocked\", reason=result.reason, project_root=pr,\nigris/core/autonomous_loop.py:186:        recommendation = route_outcome(report, task.description, history)\nigris/core/autonomous_loop.py:188:        result.outcome = \"success\" if success else \"failure\"\nigris/core/autonomous_loop.py:195:                outcome=\"success\", project_root=pr,\nigris/core/autonomous_loop.py:220:        result.outcome = \"skipped\"\nigris/core/autonomous_loop.py:225:            outcome=\"skipped\", reason=\"patch proposals require manual review\",\nigris/core/autonomous_loop.py:231:        result.outcome = \"skipped\"\nigris/core/autonomous_loop.py:236:            outcome=\"skipped\", reason=\"no safe auto action\", project_root=pr,\nigris/core/autonomous_loop.py:272:        if step_result.outcome in (\"stopped\",):\nigris/core/autonomous_loop.py:278:        if len(recent) >= 3 and all(s.get(\"outcome\") == \"failure\" for s in recent):\nigris/core/autonomous_loop.py:288:        if step_result.outcome in (\"blocked\", \"skipped\"):\nigris/core/autonomous_loop.py:289:            skip_count = sum(1 for s in _loop_status.steps if s.get(\"outcome\") in (\"blocked\", \"skipped\"))\nigris/core/goap_planner.py:295:            success_criteria=[\"Report contains steps, outcomes, decisions\"],\nigris/core/goap_planner.py:419:                    failed_count = sum(1 for h in history if h.get(\"content\", {}).get(\"outcome\") == \"failure\")\n",
+            "stderr": "",
+            "success": true,
+            "evidence": "process-executed"
+          },
+          {
+            "action_id": "ACT-002",
+            "command": "rg -n \"context_weights|weight\" igris/core/context_manager.py -S || true",
+            "returncode": 0,
+            "stdout": "501:        \"\"\"Build a lightweight context for code navigation tasks.\"\"\"\n",
+            "stderr": "",
+            "success": true,
+            "evidence": "process-executed"
+          },
+          {
+            "action_id": "ACT-003",
+            "command": "git rev-parse --short HEAD",
+            "returncode": 0,
+            "stdout": "1661548\n",
+            "stderr": "",
+            "success": true,
+            "evidence": "process-executed"
+          }
+        ],
+        "final_judgment": {
+          "technical_status": "passed",
+          "strategic_status": "passed",
+          "reason": "Mission b35a8be0-0e48-4115-a6d4-ab6b76d61938 status=completed; quality_passed=True; satisfaction_passed=True."
+        }
+      },
+      "manual_reviewer_judgment": {
+        "status": "partial",
+        "alignment": "misaligned",
+        "notes": "Evidenza multi-step presente ma non ancora sufficiente per completed reale.",
+        "usefulness_score": 0.72
+      },
+      "discrepancy_present": true,
+      "discrepancy_cause": "multi_step_depth_insufficient",
+      "recommended_follow_up": "Add multi-step depth threshold before completed.",
+      "runtime_overhead_note": "No deep loop integration; Mission Brain wrapper only."
+    },
+    {
+      "mission_id": "M5",
+      "mission_type": "multi_file_change",
+      "issue_number": 523,
+      "issue_title": "Self-modification gate \u2014 protezione speciale per auto-modifiche",
+      "input": "Raccogli evidenza multi-file per issue #523 su gate auto-modifica: core registry, smoke check, rollback path.",
+      "available_context": {
+        "issue_url": "https://github.com/Solarfox88/IGRIS_GPT/issues/523",
+        "paths": [
+          "igris/core/self_repair_supervisor.py",
+          "igris/core/agent_reasoning_loop.py",
+          "igris/web/server.py"
+        ],
+        "category": "multi_file"
+      },
+      "mission_brain_report_path": ".igris/mission_brain/reports/b1f98ab8-7182-4729-9bc2-8b6b6ede54e6.json",
+      "declared_status": "completed",
+      "observable_outcome": {
+        "quality_gate_passed": true,
+        "satisfaction_gate_passed": true,
+        "execution_results": [
+          {
+            "action_id": "ACT-001",
+            "command": "rg -n \"self-modification|no_diff_repair|rollback|smoke\" igris/core/self_repair_supervisor.py -S",
+            "returncode": 0,
+            "stdout": "79:CAPABILITY_LIMIT_SIGNALS = frozenset({\"reasoning_timeout\", \"pytest_hang\", \"no_diff_repair\"})\n228:    required_smoke_endpoints: List[str] = field(default_factory=list)\n263:    # so that accumulated no_diff_repair / reasoning_timeout counts survive\n282:            required_smoke_endpoints=list(data.get(\"required_smoke_endpoints\", [])),\n326:    rollback_policy: str\n491:    def smoke(self, endpoints: List[str], restart_command: str = \"\") -> CommandResult: ...\n930:    def smoke(self, endpoints: List[str], restart_command: str = \"\") -> CommandResult:\n944:            if not _smoke_output_is_valid(endpoint, result.output):\n1203:    smoke: Optional[CommandResult] = None,\n1242:        if stop in {\"reasoning_timeout\", \"budget_exceeded\", \"no_diff_repair\"}:\n1255:    if smoke and not smoke.success:\n1256:        smoke_text = \"\\n\".join([smoke.output or \"\", smoke.error or \"\"]).lower()\n1257:        if \"bootstrap\" in smoke_text or \"invalid bootstrap\" in smoke_text:\n1773:def _smoke_output_is_valid(endpoint: str, output: str) -> bool:\n2399:        if any(token in lowered for token in (\"e2e\", \"end-to-end\", \"workflow\", \"ci\", \"merge\", \"restart\", \"smoke\")):\n2416:                        validation=[\"targeted tests (if configured)\", \"full pytest\", \"smoke endpoints\"],\n2417:                        rollback_policy=\"Restore only for unsafe/off-contract diffs.\",\n2434:                rollback_policy=\"No rollback needed; no edits expected.\",\n2449:                validation=[\"target endpoint reachable in tests/smoke\"],\n2450:                rollback_policy=\"Restore only unsafe/off-contract backend edits.\",\n2467:                rollback_policy=\"Restore only unsafe/off-contract test edits.\",\n2483:                validation=[\"UI/dashboard smoke checks\"],\n2484:                rollback_policy=\"Restore only unsafe/off-contract UI edits.\",\n2492:                goal=\"Add or update UI/dashboard smoke tests when UI stage is required.\",\n2495:                acceptance_criteria=[\"UI/dashboard smoke tests cover the new visibility signal.\"],\n2497:                rollback_policy=\"Restore only unsafe/off-contract test edits.\",\n2510:                rollback_policy=\"Skip restore for not-applicable stage.\",\n2523:                rollback_policy=\"No restore for test execution itself.\",\n2536:                rollback_policy=\"No restore for test execution itself.\",\n2549:                rollback_policy=\"No rollback for disabled workflow; mark skipped with reason.\",\n2557:                goal=\"Pull main, restart runtime and run live smoke when enabled.\",\n2560:                acceptance_criteria=[\"Post-merge smoke green on refreshed runtime.\"],\n2561:                validation=[\"required smoke endpoints\"],\n2562:                rollback_policy=\"Block completion if runtime smoke fails.\",\n2565:                repair_strategy=\"Repair runtime/bootstrap and rerun smoke.\",\n2575:                rollback_policy=\"Never mark completed if required stages are missing/failed.\",\n2593:            \"rollback_policy\": stage.rollback_policy,\n2679:        post_merge_smoke_success: bool,\n2680:        smoke_was_applicable: bool,\n2689:        - when a post-merge smoke was applicable (merge was actually attempted),\n2696:        ``smoke_was_applicable`` must be True only when a merge was actually\n2697:        executed (not dry-run, not merge-disabled).  When smoke is not\n2704:        smoke, non-empty failure_class) trigger degraded.\n2715:        if smoke_was_applicable and runtime_refresh_required and not post_merge_smoke_success:\n2717:                \"post-merge smoke deferred; runtime refresh required but smoke not confirmed\"\n3379:        run.add(\"baseline_smoke\", \"running\", \"Running baseline smoke\")\n3380:        smoke = self.backend.smoke(config.required_smoke_endpoints, restart_command)\n3381:        run.add(\"baseline_smoke\", \"success\" if smoke.success else \"failure\", _command_detail(smoke))\n3385:        if not smoke.success:\n3386:            return self._blocked(run, \"infrastructure_bug\", \"Baseline smoke failed\")\n3410:                # This preserves no_diff_repair / reasoning_timeout counts across\n3638:                    # loop itself signals \"no_diff_repair\" AND produced no files.\n3645:                    if stop_reason == \"no_diff_repair\" and not modified_files:\n3650:                        self._record_capability_signal(run, \"no_diff_repair\")\n3674:                and stop_reason == \"no_diff_repair\"\n3687:            if stage_failure == \"reasoning_loop_blocked\" and stop_reason == \"no_diff_repair\" and not modified_files:\n3690:                run.add(\"diff_stat\", \"skipped\", \"Skipped diff collection after no_diff_repair with no modified files.\")\n3763:                    post_merge_smoke=False,\n3769:            final_smoke = CommandResult(True, \"Final smoke skipped\")\n3809:                run.add(\"smoke\", \"skipped\", \"Skipped because a required stage failed before validation.\")\n3895:                run.add(\"smoke\", \"running\", \"Running final smoke\")\n3896:                final_smoke = self.backend.smoke(config.required_smoke_endpoints, restart_command)\n3899:                run.add(\"smoke\", \"success\" if final_smoke.success else \"failure\", _command_detail(final_smoke))\n3922:                    final_smoke,\n3931:                    post_merge_smoke=final_smoke.success,\n3945:                and final_smoke.success\n3954:                    post_merge_smoke=final_smoke.success,\n3958:            rank_passed = self._rank_passed(reasoning, diff_stat, targeted, full, final_smoke)\n3964:                    failure = classify_failure(reasoning, diff.output, targeted, full, final_smoke)\n3972:                    if failure == \"reasoning_loop_blocked\" and stop_reason == \"no_diff_repair\":\n3973:                        self._record_capability_signal(run, \"no_diff_repair\")\n4270:        smoke: CommandResult,\n4294:            and smoke.success\n4303:        smoke: CommandResult,\n4311:        if not (targeted.success and full.success and smoke.success):\n5156:            self._record_capability_signal(run, \"no_diff_repair\")\n5225:                \"High-risk helper advice detected; running stronger validation smoke.\",\n5227:            strong_smoke = self.backend.smoke(config.required_smoke_endpoints, \"\")\n5230:                \"success\" if strong_smoke.success else \"failure\",\n5231:                _command_detail(strong_smoke),\n5233:            if not strong_smoke.success:\n5234:                _restore_or_preserve(\"High-risk advisory validation smoke failed; restoring.\", force_restore=True)\n5239:                        \"High-risk advisory smoke failed; retrying with remaining budget.\",\n5322:        post_merge_smoke: Optional[CommandResult] = None\n5413:                            \"post_merge_smoke\",\n5415:                            \"Post-merge smoke deferred until the runtime is restarted and refreshed.\",\n5424:                                \"Post-merge runtime smoke deferred until runtime refresh.\",\n5428:                        post_merge_smoke = self.backend.smoke(\n5429:                            config.required_smoke_endpoints,\n5433:                            \"post_merge_smoke\",\n5434:                            \"success\" if post_merge_smoke.success else \"failure\",\n5435:                            _command_detail(post_merge_smoke),\n5442:                                \"success\" if post_merge_smoke.success else \"failure\",\n5443:                                \"Post-merge runtime smoke passed.\"\n5444:                                if post_merge_smoke.success\n5445:                                else \"Post-merge runtime smoke failed.\",\n5447:                        if not post_merge_smoke.success:\n5454:                                post_merge_smoke_success=False,\n5455:                                smoke_was_applicable=True,  # smoke ran (but failed)\n5465:                                \"post_merge_smoke\": False,\n5526:        post_smoke_success = False if post_merge_smoke is None else post_merge_smoke.success\n5527:        # post_merge_smoke is only non-None when a merge was actually executed\n5528:        smoke_applicable = post_merge_smoke is not None\n5532:            post_merge_smoke_success=post_smoke_success,\n5533:            smoke_was_applicable=smoke_applicable,\n5543:            \"post_merge_smoke\": post_smoke_success,\n5560:        post_merge_smoke: bool,\n5593:            \"post_merge_smoke\": post_merge_smoke,\n5727:        capability wall \u2014 e.g. one reasoning_timeout + one no_diff_repair).\n5742:        `no_diff_repair` signals indicate transient failures where decomposition may\n6739:            \"required_smoke_endpoints\": list(config.required_smoke_endpoints),\n",
+            "stderr": "",
+            "success": true,
+            "evidence": "process-executed"
+          },
+          {
+            "action_id": "ACT-002",
+            "command": "rg -n \"no_diff_repair|stop condition\" igris/core/agent_reasoning_loop.py -S",
+            "returncode": 0,
+            "stdout": "19:       - human_gate -> ask_user (stop condition)\n20:       - terminal -> finish/blocked (stop condition)\n26:Stop conditions:\n61:    \"no_diff_repair\",\n240:        self._steps_without_write: int = 0  # no_diff_repair guard\n270:        7. Checks stop conditions\n296:            # Check stop conditions before each step\n1898:            return \"no_diff_repair\"\n",
+            "stderr": "",
+            "success": true,
+            "evidence": "process-executed"
+          },
+          {
+            "action_id": "ACT-003",
+            "command": "rg -n \"safety|summary\" igris/web/server.py -S",
+            "returncode": 0,
+            "stdout": "48:from igris.core import safety\n542:    @app.get('/api/rank/summary-card')\n543:    async def get_rank_summary_card():\n546:    @app.get('/api/system/version-summary')\n547:    async def get_version_summary():\n574:        return safety.redact_secrets(text)\n708:    @app.get(\"/api/chat/context/summary\")\n709:    async def api_chat_context_summary() -> Dict[str, object]:\n710:        return chat_context.get_context_summary(\n744:    # ---- Dashboard Summary ----\n746:    @app.get(\"/api/dashboard/summary\")\n747:    async def api_dashboard_summary() -> Dict[str, object]:\n755:            diag = diagnostics_dash.get_diagnostic_summary(\n772:                \"primary\": [\"dashboard\", \"code\", \"tasks\", \"terminal\", \"memory\", \"safety\", \"advanced\"],\n778:                    \"safety\": [\"safety\", \"cost\"],\n788:        from igris.core.chat_personality import get_capability_summary\n789:        return get_capability_summary()\n877:    @app.get(\"/api/git/safety-check\")\n878:    async def api_git_safety_check() -> Dict[str, object]:\n879:        return git_ops.pre_commit_safety_check()\n881:    @app.get(\"/api/git/pr-summary\")\n882:    async def api_git_pr_summary(base: str = \"main\") -> Dict[str, object]:\n883:        return git_ops.generate_pr_summary(base_branch=base)\n900:            \"detail\": safety.redact_secrets(result.message if result.success else result.error),\n929:            \"detail\": safety.redact_secrets(result.error if result.error else f\"PR #{result.pr_number}\"),\n1058:    @app.get(\"/api/cost/summary\")\n1059:    async def api_cost_summary() -> Dict[str, object]:\n1060:        return provider_router.cost_summary()\n1100:                if safety.is_runtime_artifact(sub_path):\n1113:                if safety.is_sensitive_filename(f):\n1116:                if safety.is_runtime_artifact(sub):\n1126:        # Use enhanced safety check\n1127:        decision = safety.check_file_preview(requested, root)\n1130:        if not safety.check_path_access(requested, root):\n1146:        if safety.detect_secret_like_content(content):\n1147:            content = safety.redact_secrets(content)\n1202:    # ---- Safety ----\n1204:    @app.get(\"/api/safety/status\")\n1205:    async def api_safety_status() -> Dict[str, object]:\n1221:        from igris.core.smw_weak_signals import get_weak_signal_summary\n1225:        weak = get_weak_signal_summary(str(CONFIG.project_root))\n1304:    async def api_memory_analysis_summary() -> Dict[str, object]:\n1306:        return memory_analysis.get_analysis_summary(project_root=str(CONFIG.project_root))\n1313:    @app.get(\"/api/memory/summary\")\n1314:    async def api_memory_summary() -> Dict[str, object]:\n1507:        for key in (\"title\", \"description\", \"plan_summary\"):\n1664:        if not safety.check_command_allowed(cmd_id):\n1764:    # ---- Safety Policy ----\n1766:    @app.get(\"/api/safety/policy\")\n1767:    async def api_safety_policy() -> Dict[str, object]:\n1770:    @app.post(\"/api/safety/policy/check\")\n1771:    async def api_safety_policy_check(request: Request) -> Dict[str, object]:\n1800:    async def api_recovery_summary() -> Dict[str, object]:\n1801:        return project_state_mod.get_recovery_summary(project_root=str(CONFIG.project_root))\n1850:            safety_decisions=content.get(\"safety_decisions\", []),\n1866:    @app.get(\"/api/diagnostics/summary\")\n1867:    async def api_diagnostics_summary() -> Dict[str, object]:\n1870:        return diagnostics_mod.get_diagnostic_summary(\n2212:        \"\"\"Validate configuration (.env, config.json, providers, budget, safety).\"\"\"\n2486:    # ---- Safety / Risk / Rollback (Epic #42) ----\n2488:    @app.post(\"/api/safety/classify-risk\")\n2498:    @app.post(\"/api/safety/check-approval\")\n2515:    @app.post(\"/api/safety/guard-secret\")\n2588:    @app.get(\"/api/safety/events\")\n2589:    async def api_safety_events(\n2595:        \"\"\"List safety events.\"\"\"\n2596:        from igris.core.safety_event_log import SafetyEventLog\n2597:        log = SafetyEventLog(project_root=str(CONFIG.project_root))\n2606:    @app.get(\"/api/safety/events/{event_id}\")\n2607:    async def api_safety_event_detail(event_id: str) -> Dict[str, object]:\n2608:        \"\"\"Get a specific safety event.\"\"\"\n2609:        from igris.core.safety_event_log import SafetyEventLog\n2610:        log = SafetyEventLog(project_root=str(CONFIG.project_root))\n2613:            raise HTTPException(status_code=404, detail=\"Safety event not found\")\n2616:    @app.get(\"/api/safety/summary\")\n2617:    async def api_safety_summary(mission_id: str = \"\") -> Dict[str, object]:\n2618:        \"\"\"Get safety event summary.\"\"\"\n2619:        from igris.core.safety_event_log import SafetyEventLog\n2620:        log = SafetyEventLog(project_root=str(CONFIG.project_root))\n2621:        return log.get_summary(mission_id)\n2907:    @app.get(\"/api/governor/summary\")\n2908:    async def api_governor_summary() -> Dict[str, object]:\n2909:        \"\"\"Get governor state summary.\"\"\"\n2913:        return gov.get_summary()\n3051:        \"\"\"Get cost tracking summary.\"\"\"\n3054:        return orch.get_cost_summary()\n3280:    @app.get(\"/api/rank/runs/{run_id}/summary\")\n3281:    async def api_rank_run_summary(run_id: str) -> Dict[str, object]:\n3282:        \"\"\"Return compact supervised rank run summary.\"\"\"\n3322:    @app.get(\"/api/rank/audit/summary\")\n3323:    async def api_rank_audit_summary() -> Dict[str, object]:\n3324:        \"\"\"Return compact supervisor audit summary.\"\"\"\n3325:        from igris.core.self_repair_supervisor import get_supervisor_audit_summary\n3326:        return get_supervisor_audit_summary(project_root=str(CONFIG.project_root))\n",
+            "stderr": "",
+            "success": true,
+            "evidence": "process-executed"
+          }
+        ],
+        "final_judgment": {
+          "technical_status": "passed",
+          "strategic_status": "passed",
+          "reason": "Mission b1f98ab8-7182-4729-9bc2-8b6b6ede54e6 status=completed; quality_passed=True; satisfaction_passed=True."
+        }
+      },
+      "manual_reviewer_judgment": {
+        "status": "completed",
+        "alignment": "aligned",
+        "notes": "Copertura multi-file utile per decisione operativa.",
+        "usefulness_score": 0.78
+      },
+      "discrepancy_present": false,
+      "discrepancy_cause": "",
+      "recommended_follow_up": "Continue controlled adoption observations.",
+      "runtime_overhead_note": "No deep loop integration; Mission Brain wrapper only."
+    },
+    {
+      "mission_id": "M6",
+      "mission_type": "ambiguous_request",
+      "issue_number": 526,
+      "issue_title": "Interlocutor-Aware Interaction + Authorization Model",
+      "input": "Sistema tutto su issue #526 e dimmi se conviene procedere ora o aspettare, senza rompere nulla?",
+      "available_context": {
+        "issue_url": "https://github.com/Solarfox88/IGRIS_GPT/issues/526",
+        "paths": [
+          "igris/core/authorization_gate.py",
+          "igris/core/proactive_engine.py"
+        ],
+        "category": "ambiguous"
+      },
+      "mission_brain_report_path": ".igris/mission_brain/reports/acfe4499-149a-40fc-a57c-69c268273eec.json",
+      "declared_status": "partial",
+      "observable_outcome": {
+        "quality_gate_passed": false,
+        "satisfaction_gate_passed": true,
+        "execution_results": [
+          {
+            "action_id": "ACT-001",
+            "command": "rg -n \"authorization|deny-by-default|delegation\" igris/core -S",
+            "returncode": 0,
+            "stdout": "igris/core/smw_pr_review.py:81:        headers={\"Authorization\": f\"Bearer {api_key}\", \"Content-Type\": \"application/json\"},\nigris/core/self_repair_supervisor.py:2003:                if any(token in lowered for token in (\"secret\", \"token\", \"password\", \"api_key\", \"authorization\")):\nigris/core/assignment_router.py:152:# - \"auth\"      would match \"Authorization\" in non-security titles\nigris/core/assignment_router.py:169:    \"interlocutor\", \"authorization model\",\nigris/core/chat_engine.py:246:            \"Authorization\": f\"Bearer {api_key}\",\nigris/core/chat_engine.py:280:            \"Authorization\": f\"Bearer {api_key}\",\nigris/core/model_orchestrator.py:726:                \"Authorization\": f\"Bearer {api_key}\",\n",
+            "stderr": "",
+            "success": true,
+            "evidence": "process-executed"
+          },
+          {
+            "action_id": "ACT-002",
+            "command": "echo \"Ambiguous mission evidence snapshot\"",
+            "returncode": 0,
+            "stdout": "Ambiguous mission evidence snapshot\n",
+            "stderr": "",
+            "success": true,
+            "evidence": "process-executed"
+          },
+          {
+            "action_id": "ACT-003",
+            "command": "",
+            "returncode": null,
+            "stdout": "",
+            "stderr": "missing command mapping",
+            "success": false,
+            "evidence": "missing-command"
+          },
+          {
+            "action_id": "ACT-004",
+            "command": "",
+            "returncode": null,
+            "stdout": "",
+            "stderr": "missing command mapping",
+            "success": false,
+            "evidence": "missing-command"
+          }
+        ],
+        "final_judgment": {
+          "technical_status": "failed",
+          "strategic_status": "passed",
+          "reason": "Mission acfe4499-149a-40fc-a57c-69c268273eec status=partial; quality_passed=False; satisfaction_passed=True."
+        }
+      },
+      "manual_reviewer_judgment": {
+        "status": "partial",
+        "alignment": "aligned",
+        "notes": "Missione ambigua: partial atteso, servono chiarimenti per completamento pieno.",
+        "usefulness_score": 0.74
+      },
+      "discrepancy_present": false,
+      "discrepancy_cause": "",
+      "recommended_follow_up": "Continue controlled adoption observations.",
+      "runtime_overhead_note": "No deep loop integration; Mission Brain wrapper only."
+    },
+    {
+      "mission_id": "M7",
+      "mission_type": "intent_mismatch_risk",
+      "issue_number": 759,
+      "issue_title": "Smoke check post-restart <=10s",
+      "input": "Verifica rischio intent-mismatch su #759: technical pass dei comandi ma copertura reale del smoke-check end-to-end.",
+      "available_context": {
+        "issue_url": "https://github.com/Solarfox88/IGRIS_GPT/issues/759",
+        "paths": [
+          "igris/core/self_repair_supervisor.py",
+          "igris/web/server.py"
+        ],
+        "category": "intent_mismatch_risk"
+      },
+      "mission_brain_report_path": ".igris/mission_brain/reports/95e68983-7805-47d2-89f4-81298019d5de.json",
+      "declared_status": "partial",
+      "observable_outcome": {
+        "quality_gate_passed": false,
+        "satisfaction_gate_passed": true,
+        "execution_results": [
+          {
+            "action_id": "ACT-001",
+            "command": "rg -n \"smoke|health|restart\" igris/core/self_repair_supervisor.py -S",
+            "returncode": 0,
+            "stdout": "227:    service_restart_command: str = \"\"\n228:    required_smoke_endpoints: List[str] = field(default_factory=list)\n231:    defer_service_restart: bool = False\n233:    # for this many seconds.  A healthy (but slow) suite keeps printing dots, so\n281:            service_restart_command=str(data.get(\"service_restart_command\", \"\")),\n282:            required_smoke_endpoints=list(data.get(\"required_smoke_endpoints\", [])),\n288:            defer_service_restart=_as_bool(data.get(\"defer_service_restart\"), False),\n491:    def smoke(self, endpoints: List[str], restart_command: str = \"\") -> CommandResult: ...\n618:        A healthy long-running command (e.g. pytest printing progress dots)\n930:    def smoke(self, endpoints: List[str], restart_command: str = \"\") -> CommandResult:\n931:        if restart_command:\n932:            allowed = {\"sudo -n systemctl restart igris\"}\n933:            if restart_command not in allowed:\n934:                return CommandResult(False, \"\", \"Restart command is not allowlisted\", 126)\n935:            restart = self._run([\"sudo\", \"-n\", \"systemctl\", \"restart\", \"igris\"], timeout=30)\n936:            if not restart.success:\n937:                return restart\n944:            if not _smoke_output_is_valid(endpoint, result.output):\n1203:    smoke: Optional[CommandResult] = None,\n1255:    if smoke and not smoke.success:\n1256:        smoke_text = \"\\n\".join([smoke.output or \"\", smoke.error or \"\"]).lower()\n1257:        if \"bootstrap\" in smoke_text or \"invalid bootstrap\" in smoke_text:\n1376:        \"tests/test_health_readiness.py\",\n1523:    bootstrap_routes = (\"/api/health\", \"/api/readiness\", \"/api/ping\")\n1773:def _smoke_output_is_valid(endpoint: str, output: str) -> bool:\n1782:    if endpoint.endswith(\"/api/health\"):\n1812:        When the server restarts, runs that were active at shutdown are stuck\n1833:                    \"detail\": f\"Run was stuck as '{status}' on server restart; marked interrupted.\",\n2399:        if any(token in lowered for token in (\"e2e\", \"end-to-end\", \"workflow\", \"ci\", \"merge\", \"restart\", \"smoke\")):\n2416:                        validation=[\"targeted tests (if configured)\", \"full pytest\", \"smoke endpoints\"],\n2449:                validation=[\"target endpoint reachable in tests/smoke\"],\n2483:                validation=[\"UI/dashboard smoke checks\"],\n2492:                goal=\"Add or update UI/dashboard smoke tests when UI stage is required.\",\n2495:                acceptance_criteria=[\"UI/dashboard smoke tests cover the new visibility signal.\"],\n2557:                goal=\"Pull main, restart runtime and run live smoke when enabled.\",\n2560:                acceptance_criteria=[\"Post-merge smoke green on refreshed runtime.\"],\n2561:                validation=[\"required smoke endpoints\"],\n2562:                rollback_policy=\"Block completion if runtime smoke fails.\",\n2565:                repair_strategy=\"Repair runtime/bootstrap and rerun smoke.\",\n2679:        post_merge_smoke_success: bool,\n2680:        smoke_was_applicable: bool,\n2689:        - when a post-merge smoke was applicable (merge was actually attempted),\n2696:        ``smoke_was_applicable`` must be True only when a merge was actually\n2697:        executed (not dry-run, not merge-disabled).  When smoke is not\n2704:        smoke, non-empty failure_class) trigger degraded.\n2715:        if smoke_was_applicable and runtime_refresh_required and not post_merge_smoke_success:\n2717:                \"post-merge smoke deferred; runtime refresh required but smoke not confirmed\"\n3242:        restart_command = config.service_restart_command\n3243:        if config.defer_service_restart and restart_command:\n3245:                \"service_restart\",\n3247:                \"Service restart deferred because this supervised run is owned by the API process.\",\n3248:                command=restart_command,\n3250:            restart_command = \"\"\n3379:        run.add(\"baseline_smoke\", \"running\", \"Running baseline smoke\")\n3380:        smoke = self.backend.smoke(config.required_smoke_endpoints, restart_command)\n3381:        run.add(\"baseline_smoke\", \"success\" if smoke.success else \"failure\", _command_detail(smoke))\n3385:        if not smoke.success:\n3386:            return self._blocked(run, \"infrastructure_bug\", \"Baseline smoke failed\")\n3763:                    post_merge_smoke=False,\n3769:            final_smoke = CommandResult(True, \"Final smoke skipped\")\n3809:                run.add(\"smoke\", \"skipped\", \"Skipped because a required stage failed before validation.\")\n3876:                # validation suite focused on service health + rank contract.\n3895:                run.add(\"smoke\", \"running\", \"Running final smoke\")\n3896:                final_smoke = self.backend.smoke(config.required_smoke_endpoints, restart_command)\n3899:                run.add(\"smoke\", \"success\" if final_smoke.success else \"failure\", _command_detail(final_smoke))\n3922:                    final_smoke,\n3931:                    post_merge_smoke=final_smoke.success,\n3945:                and final_smoke.success\n3954:                    post_merge_smoke=final_smoke.success,\n3958:            rank_passed = self._rank_passed(reasoning, diff_stat, targeted, full, final_smoke)\n3964:                    failure = classify_failure(reasoning, diff.output, targeted, full, final_smoke)\n4270:        smoke: CommandResult,\n4294:            and smoke.success\n4303:        smoke: CommandResult,\n4311:        if not (targeted.success and full.success and smoke.success):\n5225:                \"High-risk helper advice detected; running stronger validation smoke.\",\n5227:            strong_smoke = self.backend.smoke(config.required_smoke_endpoints, \"\")\n5230:                \"success\" if strong_smoke.success else \"failure\",\n5231:                _command_detail(strong_smoke),\n5233:            if not strong_smoke.success:\n5234:                _restore_or_preserve(\"High-risk advisory validation smoke failed; restoring.\", force_restore=True)\n5239:                        \"High-risk advisory smoke failed; retrying with remaining budget.\",\n5321:        restart_command = config.service_restart_command if not config.defer_service_restart else \"\"\n5322:        post_merge_smoke: Optional[CommandResult] = None\n5411:                    if config.defer_service_restart and runtime_refresh_required:\n5413:                            \"post_merge_smoke\",\n5415:                            \"Post-merge smoke deferred until the runtime is restarted and refreshed.\",\n5424:                                \"Post-merge runtime smoke deferred until runtime refresh.\",\n5428:                        post_merge_smoke = self.backend.smoke(\n5429:                            config.required_smoke_endpoints,\n5430:                            restart_command,\n5433:                            \"post_merge_smoke\",\n5434:                            \"success\" if post_merge_smoke.success else \"failure\",\n5435:                            _command_detail(post_merge_smoke),\n5442:                                \"success\" if post_merge_smoke.success else \"failure\",\n5443:                                \"Post-merge runtime smoke passed.\"\n5444:                                if post_merge_smoke.success\n5445:                                else \"Post-merge runtime smoke failed.\",\n5447:                        if not post_merge_smoke.success:\n5454:                                post_merge_smoke_success=False,\n5455:                                smoke_was_applicable=True,  # smoke ran (but failed)\n5465:                                \"post_merge_smoke\": False,\n5526:        post_smoke_success = False if post_merge_smoke is None else post_merge_smoke.success\n5527:        # post_merge_smoke is only non-None when a merge was actually executed\n5528:        smoke_applicable = post_merge_smoke is not None\n5532:            post_merge_smoke_success=post_smoke_success,\n5533:            smoke_was_applicable=smoke_applicable,\n5543:            \"post_merge_smoke\": post_smoke_success,\n5560:        post_merge_smoke: bool,\n5593:            \"post_merge_smoke\": post_merge_smoke,\n6738:            \"service_restart_command\": config.service_restart_command,\n6739:            \"required_smoke_endpoints\": list(config.required_smoke_endpoints),\n7061:    payload[\"defer_service_restart\"] = True\n7245:            # interrupted by a service restart \u2014 promote it to a terminal\n7251:                    \"Run was interrupted by a service restart and is no longer active.\",\n",
+            "stderr": "",
+            "success": true,
+            "evidence": "process-executed"
+          },
+          {
+            "action_id": "ACT-002",
+            "command": "rg -n \"api/health|health\" igris/web/server.py -S",
+            "returncode": 0,
+            "stdout": "748:        \"\"\"Aggregated dashboard view \u2014 health, readiness, diagnostics, loop.\"\"\"\n768:            \"health\": {\"status\": \"ok\"},\n1211:    # ---- Health / Readiness ----\n1213:    @app.get(\"/api/health\")\n1214:    async def api_health() -> Dict[str, object]:\n1217:    @app.get(\"/api/smw/health\")\n1218:    async def api_smw_health() -> Dict[str, object]:\n2744:        \"\"\"HTTP health check.\"\"\"\n",
+            "stderr": "",
+            "success": true,
+            "evidence": "process-executed"
+          },
+          {
+            "action_id": "ACT-003",
+            "command": "python -c \"import sys; sys.exit(1)\"",
+            "returncode": 127,
+            "stdout": "",
+            "stderr": "/bin/sh: 1: python: not found\n",
+            "success": false,
+            "evidence": "process-executed"
+          },
+          {
+            "action_id": "ACT-004",
+            "command": "",
+            "returncode": null,
+            "stdout": "",
+            "stderr": "missing command mapping",
+            "success": false,
+            "evidence": "missing-command"
+          }
+        ],
+        "final_judgment": {
+          "technical_status": "failed",
+          "strategic_status": "passed",
+          "reason": "Mission 95e68983-7805-47d2-89f4-81298019d5de status=partial; quality_passed=False; satisfaction_passed=True."
+        }
+      },
+      "manual_reviewer_judgment": {
+        "status": "partial",
+        "alignment": "aligned",
+        "notes": "Technical evidence utile ma rischio mismatch resta: partial corretto.",
+        "usefulness_score": 0.76
+      },
+      "discrepancy_present": false,
+      "discrepancy_cause": "",
+      "recommended_follow_up": "Continue controlled adoption observations.",
+      "runtime_overhead_note": "No deep loop integration; Mission Brain wrapper only."
+    }
+  ],
+  "aggregate_metrics_792": {
+    "total_missions": 4,
+    "completed_count": 2,
+    "partial_count": 2,
+    "failed_count": 0,
+    "false_completed_count": 1,
+    "critical_false_completed_count": 0,
+    "false_partial_count": 0,
+    "false_failed_count": 0,
+    "quality_gate_accuracy": 0.5,
+    "satisfaction_gate_accuracy": 0.25,
+    "manual_review_alignment_rate": 0.75,
+    "average_report_usefulness_score": 0.75
+  },
+  "aggregate_metrics_cumulative_7_of_10": {
+    "total_missions": 7,
+    "completed_count": 3,
+    "partial_count": 4,
+    "failed_count": 0,
+    "false_completed_count": 2,
+    "critical_false_completed_count": 0,
+    "false_partial_count": 1,
+    "false_failed_count": 0,
+    "quality_gate_accuracy": 0.429,
+    "satisfaction_gate_accuracy": 0.286,
+    "manual_review_alignment_rate": 0.714,
+    "average_report_usefulness_score": 0.75,
+    "adoption_decision": "keep wrapper"
+  },
+  "false_completed_analysis": {
+    "status_791_false_completed": "present",
+    "status_792_false_completed": "present",
+    "classification": "recurring_pattern",
+    "primary_hypothesis": "quality_gate_evidence_depth_gap",
+    "secondary_hypothesis": "manual_review_mapping_stricter_than_gate_completion_rule",
+    "quality_gate_contribution": "likely",
+    "satisfaction_gate_contribution": "secondary",
+    "manual_review_mapping_contribution": "likely",
+    "report_evidence_contribution": "likely",
+    "evidence": [
+      "multi-step missions can pass technical checks while still lacking depth for manual completed status",
+      "same discrepancy class repeated in M2 (#791) and M4 (#792)"
+    ],
+    "recommended_793_update": "include targeted recurring false-completed diagnostics for multi-step evidence depth"
+  },
+  "gate_decision_for_793": "update_793_with_targeted_false_completed_diagnostics"
+}

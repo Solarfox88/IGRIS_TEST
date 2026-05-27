@@ -1,0 +1,74 @@
+{
+  "mission_id": "M7",
+  "mission_type": "intent_mismatch_risk",
+  "issue_number": 759,
+  "issue_title": "Smoke check post-restart <=10s",
+  "input": "Verifica rischio intent-mismatch su #759: technical pass dei comandi ma copertura reale del smoke-check end-to-end.",
+  "available_context": {
+    "issue_url": "https://github.com/Solarfox88/IGRIS_GPT/issues/759",
+    "paths": [
+      "igris/core/self_repair_supervisor.py",
+      "igris/web/server.py"
+    ],
+    "category": "intent_mismatch_risk"
+  },
+  "mission_brain_report_path": ".igris/mission_brain/reports/95e68983-7805-47d2-89f4-81298019d5de.json",
+  "declared_status": "partial",
+  "observable_outcome": {
+    "quality_gate_passed": false,
+    "satisfaction_gate_passed": true,
+    "execution_results": [
+      {
+        "action_id": "ACT-001",
+        "command": "rg -n \"smoke|health|restart\" igris/core/self_repair_supervisor.py -S",
+        "returncode": 0,
+        "stdout": "227:    service_restart_command: str = \"\"\n228:    required_smoke_endpoints: List[str] = field(default_factory=list)\n231:    defer_service_restart: bool = False\n233:    # for this many seconds.  A healthy (but slow) suite keeps printing dots, so\n281:            service_restart_command=str(data.get(\"service_restart_command\", \"\")),\n282:            required_smoke_endpoints=list(data.get(\"required_smoke_endpoints\", [])),\n288:            defer_service_restart=_as_bool(data.get(\"defer_service_restart\"), False),\n491:    def smoke(self, endpoints: List[str], restart_command: str = \"\") -> CommandResult: ...\n618:        A healthy long-running command (e.g. pytest printing progress dots)\n930:    def smoke(self, endpoints: List[str], restart_command: str = \"\") -> CommandResult:\n931:        if restart_command:\n932:            allowed = {\"sudo -n systemctl restart igris\"}\n933:            if restart_command not in allowed:\n934:                return CommandResult(False, \"\", \"Restart command is not allowlisted\", 126)\n935:            restart = self._run([\"sudo\", \"-n\", \"systemctl\", \"restart\", \"igris\"], timeout=30)\n936:            if not restart.success:\n937:                return restart\n944:            if not _smoke_output_is_valid(endpoint, result.output):\n1203:    smoke: Optional[CommandResult] = None,\n1255:    if smoke and not smoke.success:\n1256:        smoke_text = \"\\n\".join([smoke.output or \"\", smoke.error or \"\"]).lower()\n1257:        if \"bootstrap\" in smoke_text or \"invalid bootstrap\" in smoke_text:\n1376:        \"tests/test_health_readiness.py\",\n1523:    bootstrap_routes = (\"/api/health\", \"/api/readiness\", \"/api/ping\")\n1773:def _smoke_output_is_valid(endpoint: str, output: str) -> bool:\n1782:    if endpoint.endswith(\"/api/health\"):\n1812:        When the server restarts, runs that were active at shutdown are stuck\n1833:                    \"detail\": f\"Run was stuck as '{status}' on server restart; marked interrupted.\",\n2399:        if any(token in lowered for token in (\"e2e\", \"end-to-end\", \"workflow\", \"ci\", \"merge\", \"restart\", \"smoke\")):\n2416:                        validation=[\"targeted tests (if configured)\", \"full pytest\", \"smoke endpoints\"],\n2449:                validation=[\"target endpoint reachable in tests/smoke\"],\n2483:                validation=[\"UI/dashboard smoke checks\"],\n2492:                goal=\"Add or update UI/dashboard smoke tests when UI stage is required.\",\n2495:                acceptance_criteria=[\"UI/dashboard smoke tests cover the new visibility signal.\"],\n2557:                goal=\"Pull main, restart runtime and run live smoke when enabled.\",\n2560:                acceptance_criteria=[\"Post-merge smoke green on refreshed runtime.\"],\n2561:                validation=[\"required smoke endpoints\"],\n2562:                rollback_policy=\"Block completion if runtime smoke fails.\",\n2565:                repair_strategy=\"Repair runtime/bootstrap and rerun smoke.\",\n2679:        post_merge_smoke_success: bool,\n2680:        smoke_was_applicable: bool,\n2689:        - when a post-merge smoke was applicable (merge was actually attempted),\n2696:        ``smoke_was_applicable`` must be True only when a merge was actually\n2697:        executed (not dry-run, not merge-disabled).  When smoke is not\n2704:        smoke, non-empty failure_class) trigger degraded.\n2715:        if smoke_was_applicable and runtime_refresh_required and not post_merge_smoke_success:\n2717:                \"post-merge smoke deferred; runtime refresh required but smoke not confirmed\"\n3242:        restart_command = config.service_restart_command\n3243:        if config.defer_service_restart and restart_command:\n3245:                \"service_restart\",\n3247:                \"Service restart deferred because this supervised run is owned by the API process.\",\n3248:                command=restart_command,\n3250:            restart_command = \"\"\n3379:        run.add(\"baseline_smoke\", \"running\", \"Running baseline smoke\")\n3380:        smoke = self.backend.smoke(config.required_smoke_endpoints, restart_command)\n3381:        run.add(\"baseline_smoke\", \"success\" if smoke.success else \"failure\", _command_detail(smoke))\n3385:        if not smoke.success:\n3386:            return self._blocked(run, \"infrastructure_bug\", \"Baseline smoke failed\")\n3763:                    post_merge_smoke=False,\n3769:            final_smoke = CommandResult(True, \"Final smoke skipped\")\n3809:                run.add(\"smoke\", \"skipped\", \"Skipped because a required stage failed before validation.\")\n3876:                # validation suite focused on service health + rank contract.\n3895:                run.add(\"smoke\", \"running\", \"Running final smoke\")\n3896:                final_smoke = self.backend.smoke(config.required_smoke_endpoints, restart_command)\n3899:                run.add(\"smoke\", \"success\" if final_smoke.success else \"failure\", _command_detail(final_smoke))\n3922:                    final_smoke,\n3931:                    post_merge_smoke=final_smoke.success,\n3945:                and final_smoke.success\n3954:                    post_merge_smoke=final_smoke.success,\n3958:            rank_passed = self._rank_passed(reasoning, diff_stat, targeted, full, final_smoke)\n3964:                    failure = classify_failure(reasoning, diff.output, targeted, full, final_smoke)\n4270:        smoke: CommandResult,\n4294:            and smoke.success\n4303:        smoke: CommandResult,\n4311:        if not (targeted.success and full.success and smoke.success):\n5225:                \"High-risk helper advice detected; running stronger validation smoke.\",\n5227:            strong_smoke = self.backend.smoke(config.required_smoke_endpoints, \"\")\n5230:                \"success\" if strong_smoke.success else \"failure\",\n5231:                _command_detail(strong_smoke),\n5233:            if not strong_smoke.success:\n5234:                _restore_or_preserve(\"High-risk advisory validation smoke failed; restoring.\", force_restore=True)\n5239:                        \"High-risk advisory smoke failed; retrying with remaining budget.\",\n5321:        restart_command = config.service_restart_command if not config.defer_service_restart else \"\"\n5322:        post_merge_smoke: Optional[CommandResult] = None\n5411:                    if config.defer_service_restart and runtime_refresh_required:\n5413:                            \"post_merge_smoke\",\n5415:                            \"Post-merge smoke deferred until the runtime is restarted and refreshed.\",\n5424:                                \"Post-merge runtime smoke deferred until runtime refresh.\",\n5428:                        post_merge_smoke = self.backend.smoke(\n5429:                            config.required_smoke_endpoints,\n5430:                            restart_command,\n5433:                            \"post_merge_smoke\",\n5434:                            \"success\" if post_merge_smoke.success else \"failure\",\n5435:                            _command_detail(post_merge_smoke),\n5442:                                \"success\" if post_merge_smoke.success else \"failure\",\n5443:                                \"Post-merge runtime smoke passed.\"\n5444:                                if post_merge_smoke.success\n5445:                                else \"Post-merge runtime smoke failed.\",\n5447:                        if not post_merge_smoke.success:\n5454:                                post_merge_smoke_success=False,\n5455:                                smoke_was_applicable=True,  # smoke ran (but failed)\n5465:                                \"post_merge_smoke\": False,\n5526:        post_smoke_success = False if post_merge_smoke is None else post_merge_smoke.success\n5527:        # post_merge_smoke is only non-None when a merge was actually executed\n5528:        smoke_applicable = post_merge_smoke is not None\n5532:            post_merge_smoke_success=post_smoke_success,\n5533:            smoke_was_applicable=smoke_applicable,\n5543:            \"post_merge_smoke\": post_smoke_success,\n5560:        post_merge_smoke: bool,\n5593:            \"post_merge_smoke\": post_merge_smoke,\n6738:            \"service_restart_command\": config.service_restart_command,\n6739:            \"required_smoke_endpoints\": list(config.required_smoke_endpoints),\n7061:    payload[\"defer_service_restart\"] = True\n7245:            # interrupted by a service restart \u2014 promote it to a terminal\n7251:                    \"Run was interrupted by a service restart and is no longer active.\",\n",
+        "stderr": "",
+        "success": true,
+        "evidence": "process-executed"
+      },
+      {
+        "action_id": "ACT-002",
+        "command": "rg -n \"api/health|health\" igris/web/server.py -S",
+        "returncode": 0,
+        "stdout": "748:        \"\"\"Aggregated dashboard view \u2014 health, readiness, diagnostics, loop.\"\"\"\n768:            \"health\": {\"status\": \"ok\"},\n1211:    # ---- Health / Readiness ----\n1213:    @app.get(\"/api/health\")\n1214:    async def api_health() -> Dict[str, object]:\n1217:    @app.get(\"/api/smw/health\")\n1218:    async def api_smw_health() -> Dict[str, object]:\n2744:        \"\"\"HTTP health check.\"\"\"\n",
+        "stderr": "",
+        "success": true,
+        "evidence": "process-executed"
+      },
+      {
+        "action_id": "ACT-003",
+        "command": "python -c \"import sys; sys.exit(1)\"",
+        "returncode": 127,
+        "stdout": "",
+        "stderr": "/bin/sh: 1: python: not found\n",
+        "success": false,
+        "evidence": "process-executed"
+      },
+      {
+        "action_id": "ACT-004",
+        "command": "",
+        "returncode": null,
+        "stdout": "",
+        "stderr": "missing command mapping",
+        "success": false,
+        "evidence": "missing-command"
+      }
+    ],
+    "final_judgment": {
+      "technical_status": "failed",
+      "strategic_status": "passed",
+      "reason": "Mission 95e68983-7805-47d2-89f4-81298019d5de status=partial; quality_passed=False; satisfaction_passed=True."
+    }
+  },
+  "manual_reviewer_judgment": {
+    "status": "partial",
+    "alignment": "aligned",
+    "notes": "Technical evidence utile ma rischio mismatch resta: partial corretto.",
+    "usefulness_score": 0.76
+  },
+  "discrepancy_present": false,
+  "discrepancy_cause": "",
+  "recommended_follow_up": "Continue controlled adoption observations.",
+  "runtime_overhead_note": "No deep loop integration; Mission Brain wrapper only."
+}

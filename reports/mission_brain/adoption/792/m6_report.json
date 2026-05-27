@@ -1,0 +1,74 @@
+{
+  "mission_id": "M6",
+  "mission_type": "ambiguous_request",
+  "issue_number": 526,
+  "issue_title": "Interlocutor-Aware Interaction + Authorization Model",
+  "input": "Sistema tutto su issue #526 e dimmi se conviene procedere ora o aspettare, senza rompere nulla?",
+  "available_context": {
+    "issue_url": "https://github.com/Solarfox88/IGRIS_GPT/issues/526",
+    "paths": [
+      "igris/core/authorization_gate.py",
+      "igris/core/proactive_engine.py"
+    ],
+    "category": "ambiguous"
+  },
+  "mission_brain_report_path": ".igris/mission_brain/reports/acfe4499-149a-40fc-a57c-69c268273eec.json",
+  "declared_status": "partial",
+  "observable_outcome": {
+    "quality_gate_passed": false,
+    "satisfaction_gate_passed": true,
+    "execution_results": [
+      {
+        "action_id": "ACT-001",
+        "command": "rg -n \"authorization|deny-by-default|delegation\" igris/core -S",
+        "returncode": 0,
+        "stdout": "igris/core/smw_pr_review.py:81:        headers={\"Authorization\": f\"Bearer {api_key}\", \"Content-Type\": \"application/json\"},\nigris/core/self_repair_supervisor.py:2003:                if any(token in lowered for token in (\"secret\", \"token\", \"password\", \"api_key\", \"authorization\")):\nigris/core/assignment_router.py:152:# - \"auth\"      would match \"Authorization\" in non-security titles\nigris/core/assignment_router.py:169:    \"interlocutor\", \"authorization model\",\nigris/core/chat_engine.py:246:            \"Authorization\": f\"Bearer {api_key}\",\nigris/core/chat_engine.py:280:            \"Authorization\": f\"Bearer {api_key}\",\nigris/core/model_orchestrator.py:726:                \"Authorization\": f\"Bearer {api_key}\",\n",
+        "stderr": "",
+        "success": true,
+        "evidence": "process-executed"
+      },
+      {
+        "action_id": "ACT-002",
+        "command": "echo \"Ambiguous mission evidence snapshot\"",
+        "returncode": 0,
+        "stdout": "Ambiguous mission evidence snapshot\n",
+        "stderr": "",
+        "success": true,
+        "evidence": "process-executed"
+      },
+      {
+        "action_id": "ACT-003",
+        "command": "",
+        "returncode": null,
+        "stdout": "",
+        "stderr": "missing command mapping",
+        "success": false,
+        "evidence": "missing-command"
+      },
+      {
+        "action_id": "ACT-004",
+        "command": "",
+        "returncode": null,
+        "stdout": "",
+        "stderr": "missing command mapping",
+        "success": false,
+        "evidence": "missing-command"
+      }
+    ],
+    "final_judgment": {
+      "technical_status": "failed",
+      "strategic_status": "passed",
+      "reason": "Mission acfe4499-149a-40fc-a57c-69c268273eec status=partial; quality_passed=False; satisfaction_passed=True."
+    }
+  },
+  "manual_reviewer_judgment": {
+    "status": "partial",
+    "alignment": "aligned",
+    "notes": "Missione ambigua: partial atteso, servono chiarimenti per completamento pieno.",
+    "usefulness_score": 0.74
+  },
+  "discrepancy_present": false,
+  "discrepancy_cause": "",
+  "recommended_follow_up": "Continue controlled adoption observations.",
+  "runtime_overhead_note": "No deep loop integration; Mission Brain wrapper only."
+}
