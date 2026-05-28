@@ -1,0 +1,65 @@
+{
+  "epic": 857,
+  "subissue": 862,
+  "title": "Extended Shadow Monitoring Consolidated Report",
+  "total_shadow_cycles": 30,
+  "batches": {
+    "baseline_845": {
+      "cycles": 10,
+      "agreement_rate": 0.0
+    },
+    "batch1_859": {
+      "cycles": 10,
+      "agreement_rate": 0.0,
+      "dominant_mismatch_class": "safe_more_optimistic_mission_brain"
+    },
+    "batch2_860": {
+      "cycles": 10,
+      "agreement_rate": 0.0,
+      "trend_direction_vs_batch1": "stable"
+    }
+  },
+  "cumulative_metrics": {
+    "agreement_rate": 0.0,
+    "disagreement_rate": 1.0,
+    "disagreement_by_class_20_new_cycles": {
+      "safe_more_optimistic_mission_brain": 20
+    },
+    "dominant_mismatch_class": "safe_more_optimistic_mission_brain",
+    "prevented_error_candidates_batch1": 10,
+    "prevented_error_candidates_batch2": 10,
+    "risk_introduced_candidates_all": 0,
+    "potential_false_completed_all": 0,
+    "potential_critical_false_completed_all": 0,
+    "potential_false_partial_all": 0,
+    "potential_false_failed_all": 0,
+    "report_usefulness_score_batch1": 0.8,
+    "report_usefulness_score_batch2": 0.8,
+    "latency_overhead_mean_ms_batch1": 1.9,
+    "latency_overhead_mean_ms_batch2": 1.6,
+    "cost_overhead_total_usd": 0.0,
+    "rollback_path_status": "ok",
+    "final_readiness_trend": "stable",
+    "stability_verdict": "structurally_zero",
+    "sample_representativeness_score": 1.0,
+    "sample_representativeness_notes": "17 distinct goal classes across 20 new cycles; 3 complexity levels; 3 batches measured.",
+    "decision_distribution_mission_brain": {
+      "partial": 20
+    },
+    "decision_distribution_current_loop": {
+      "failed": 20
+    }
+  },
+  "guardrails": {
+    "shadow_mode_only": true,
+    "default_behavior_unchanged": true,
+    "no_enable_by_default": true,
+    "no_mandatory_gate": true,
+    "no_irreversible_integration": true,
+    "rollback_path_status": "ok"
+  },
+  "final_decision": "start disagreement calibration",
+  "decision_rationale": "After 30 shadow cycles across 3 batches and 17 distinct goal classes, agreement_rate=0.0 is confirmed as structurally stable. Mission Brain is uniformly more optimistic (decision: 'partial') than the current loop (decision: 'failed') on every observed cycle. No risk has been introduced (risk_introduced_candidates=0), no critical false completions occurred (potential_critical_false_completed=0), and the rollback path is intact. The sample is highly representative (score=1.0, 17 classes, 3 complexity levels). The divergence pattern is now well-understood and safe to calibrate: we know the dominant mismatch is 'safe_more_optimistic_mission_brain'. Calibration should focus on understanding WHY MB always returns 'partial' while the loop returns 'failed', and whether this is a taxonomy mismatch, a policy difference, or a genuine capability gap.",
+  "epic_closure": true,
+  "evaluation": "passed"
+}
