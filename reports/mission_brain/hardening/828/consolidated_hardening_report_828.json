@@ -1,0 +1,47 @@
+{
+  "epic": 823,
+  "issue": 828,
+  "baseline": {
+    "source": "reports/mission_brain/adoption/793/adoption_793_final_batch.json",
+    "false_completed_count": 2,
+    "critical_false_completed_count": 0,
+    "quality_gate_accuracy": 0.3,
+    "satisfaction_gate_accuracy": 0.2,
+    "manual_review_alignment_rate": 0.8
+  },
+  "post_hardening": {
+    "source": "reports/mission_brain/hardening/827/hardening_827_replay_delta.json",
+    "false_completed_count": 0,
+    "critical_false_completed_count": 0,
+    "delta_false_completed_count": -2,
+    "manual_policy_alignment_guard_active": true,
+    "legitimate_completed_regression": false
+  },
+  "success_criteria": {
+    "false_completed_replay_zero": true,
+    "critical_false_completed_zero": true,
+    "quality_gate_accuracy_improved": true,
+    "satisfaction_gate_accuracy_not_worse": true,
+    "manual_review_alignment_stable_or_improved": true,
+    "no_regression_on_legitimate_completed": true
+  },
+  "decision": {
+    "allowed_outcomes": [
+      "keep wrapper",
+      "candidate for controlled deeper integration",
+      "remediate again"
+    ],
+    "selected": "candidate for controlled deeper integration",
+    "reason": [
+      "replayed false-completed cases reduced to zero",
+      "critical false-completed remains zero",
+      "policy/evidence hardening now deterministic and test-covered",
+      "no legitimate completed regression in replay validation"
+    ]
+  },
+  "guardrails": [
+    "controlled deeper integration only",
+    "retain rollback to wrapper mode",
+    "continue metric monitoring for false_completed and gate accuracy"
+  ]
+}
