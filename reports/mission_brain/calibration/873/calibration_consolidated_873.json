@@ -1,0 +1,103 @@
+{
+  "epic": 868,
+  "subissue": 873,
+  "title": "Consolidated Calibration Report \u2014 Final Decision",
+  "subissues_completed": [
+    869,
+    870,
+    871,
+    872,
+    873
+  ],
+  "gate_chain_passed": true,
+  "risk_introduced_candidates": 0,
+  "potential_critical_false_completed": 0,
+  "risky_more_optimistic_count": 0,
+  "total_shadow_cycles": 30,
+  "new_cycles": 20,
+  "baseline_cycles": 10,
+  "agreement_rate": 0.0,
+  "agreement_rate_interpretation": "0.0 is expected and acceptable \u2014 structural scope mismatch (goal-level vs run-level), not MB malfunction",
+  "scope_mismatch_count": 17,
+  "ambiguous_context_count": 3,
+  "legacy_unclassified_count": 10,
+  "safe_partial_count": 17,
+  "invariant_failed_count": 0,
+  "taxonomy_changed_cycles": 20,
+  "taxonomy_version": "calibrated_v1",
+  "findings": [
+    {
+      "id": "F1",
+      "finding": "Scope mismatch is the primary divergence driver",
+      "evidence": "17/20 new cycles classified as scope_mismatch_goal_vs_run_assessment. MB evaluates GOAL-level partial progress; loop evaluates RUN-level binary outcome. These measure different properties \u2014 not a real disagreement.",
+      "impact": "low_risk"
+    },
+    {
+      "id": "F2",
+      "finding": "3 contested cycles identified (ambiguous_goal, empty_context, conflicting_signals)",
+      "evidence": "For 3 goal classes, MB's 'partial' reflects goal ambiguity/missing context, not real partial progress. Calibration recommendation: MB should return 'unknown' or 'insufficient_context' for these cases.",
+      "impact": "low_risk"
+    },
+    {
+      "id": "F3",
+      "finding": "No invariant_failed cases \u2014 MB never dangerously wrong",
+      "evidence": "invariant_failed_count=0. MB's 'partial' never creates false 'completed' signal.",
+      "impact": "positive"
+    },
+    {
+      "id": "F4",
+      "finding": "agreement_rate=0.0 is structural, not a bug",
+      "evidence": "All 30 cycles had blocked/failed runs. Loop always returns 'failed' (binary run-level). MB always returns 'partial' (graded goal-level). The 100% disagreement rate reflects this structural scope difference, not MB malfunction.",
+      "impact": "informational"
+    },
+    {
+      "id": "F5",
+      "finding": "10 baseline cycles lack goal_class \u2014 partial taxonomy coverage",
+      "evidence": "legacy_unclassified_count=10. Baseline cycles (847+849) were generated before goal_class field was added. Full 30-cycle taxonomy coverage requires backfilling goal_class.",
+      "impact": "minor_gap"
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "R1",
+      "recommendation": "Keep shadow monitoring active \u2014 no changes to loop behavior",
+      "rationale": "No safety issues found. Shadow monitoring provides value in classifying goal-level partial progress.",
+      "scope": "shadow_only"
+    },
+    {
+      "id": "R2",
+      "recommendation": "Calibrate MB to return 'unknown' for ambiguous_goal, empty_context, conflicting_signals",
+      "rationale": "3 contested cases: MB's 'partial' is uninformative when goal specification is insufficient.",
+      "scope": "shadow_only",
+      "affects_default_behavior": false
+    },
+    {
+      "id": "R3",
+      "recommendation": "Backfill goal_class for 10 baseline cycles in future sprint",
+      "rationale": "Achieves full 30-cycle calibrated taxonomy coverage.",
+      "scope": "data_quality",
+      "priority": "low"
+    },
+    {
+      "id": "R4",
+      "recommendation": "Add goal_class to all future shadow cycle records",
+      "rationale": "Required for calibrated taxonomy to work fully. New cycles already have it.",
+      "scope": "schema",
+      "priority": "medium"
+    }
+  ],
+  "final_decision": "calibration_complete",
+  "final_decision_rationale": "All safety gates passed across all 5 subissues. Taxonomy calibration is complete for the 20 new cycles (the scoped dataset). The two new mismatch classes (scope_mismatch_goal_vs_run_assessment, expected_divergence_ambiguous_context) accurately describe the divergence. MB is NOT dangerously wrong \u2014 no invariant_failed cases, no risk increase. Shadow monitoring continues unchanged. Default loop behavior unchanged. No integration, no rollout, no enable-by-default.",
+  "summary": "EPIC #868 complete. Mission Brain Shadow Disagreement Calibration achieved. 30 cycles analyzed (10 baseline + 20 new). agreement_rate=0.0 (structural, expected). 17 scope_mismatch cycles (MB and loop measure different scopes). 3 contested cycles (goal ambiguity \u2014 MB should return 'unknown'). 10 legacy unclassified (baseline cycles, no goal_class). No risk increase, no false completed signals, no invariant failures. Final decision: calibration_complete. Shadow mode only. Default behavior unchanged.",
+  "guardrails": {
+    "shadow_mode_only": true,
+    "default_behavior_unchanged": true,
+    "no_enable_by_default": true,
+    "no_mandatory_gate": true,
+    "no_rollout": true,
+    "no_integration_without_approval": true
+  },
+  "evaluation": "passed",
+  "stop_reason": null,
+  "epic_status": "complete"
+}

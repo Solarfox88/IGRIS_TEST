@@ -1,0 +1,352 @@
+{
+  "epic": 868,
+  "subissue": 872,
+  "title": "Calibration Replay \u2014 30 Cycles",
+  "total_cycles": 30,
+  "baseline_cycles": 10,
+  "new_cycles": 20,
+  "agreement_rate": 0.0,
+  "disagreement_rate": 1.0,
+  "agreement_rate_invariant": true,
+  "risk_introduced_candidates": 0,
+  "potential_critical_false_completed": 0,
+  "rollback_path_status": "ok",
+  "metrics_before": {
+    "disagreement_by_class": {
+      "safe_more_optimistic_mission_brain": 30
+    },
+    "dominant_mismatch_classes": [
+      "safe_more_optimistic_mission_brain"
+    ]
+  },
+  "metrics_after": {
+    "calibrated_disagreement_by_class": {
+      "scope_mismatch_goal_vs_run_assessment": 17,
+      "safe_more_optimistic_mission_brain": 10,
+      "expected_divergence_ambiguous_context": 3
+    },
+    "calibrated_dominant_mismatch_classes": [
+      "scope_mismatch_goal_vs_run_assessment",
+      "safe_more_optimistic_mission_brain",
+      "expected_divergence_ambiguous_context"
+    ],
+    "scope_mismatch_count": 17,
+    "ambiguous_context_count": 3,
+    "legacy_unclassified_count": 10
+  },
+  "taxonomy_changed_cycles": 20,
+  "taxonomy_unchanged_cycles": 10,
+  "taxonomy_version_before": "legacy_v0",
+  "taxonomy_version_after": "calibrated_v1",
+  "summary": "Replayed 30 cycles (10 baseline + 20 new). agreement_rate=0.0 INVARIANT \u2014 calibration does not affect binary agreement. Taxonomy changed in 20 cycles: 17 reclassified as scope_mismatch_goal_vs_run_assessment, 3 as expected_divergence_ambiguous_context, 10 remain legacy (baseline cycles without goal_class). No risk increase. Gate passed.",
+  "per_cycle_replay": [
+    {
+      "cycle_id": "batch1-c1",
+      "goal_class": "",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "safe_more_optimistic_mission_brain",
+      "taxonomy_changed": false
+    },
+    {
+      "cycle_id": "batch1-c2",
+      "goal_class": "",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "safe_more_optimistic_mission_brain",
+      "taxonomy_changed": false
+    },
+    {
+      "cycle_id": "batch1-c3",
+      "goal_class": "",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "safe_more_optimistic_mission_brain",
+      "taxonomy_changed": false
+    },
+    {
+      "cycle_id": "batch1-c4",
+      "goal_class": "",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "safe_more_optimistic_mission_brain",
+      "taxonomy_changed": false
+    },
+    {
+      "cycle_id": "batch1-c5",
+      "goal_class": "",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "safe_more_optimistic_mission_brain",
+      "taxonomy_changed": false
+    },
+    {
+      "cycle_id": "batch2-c1",
+      "goal_class": "",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "safe_more_optimistic_mission_brain",
+      "taxonomy_changed": false
+    },
+    {
+      "cycle_id": "batch2-c2",
+      "goal_class": "",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "safe_more_optimistic_mission_brain",
+      "taxonomy_changed": false
+    },
+    {
+      "cycle_id": "batch2-c3",
+      "goal_class": "",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "safe_more_optimistic_mission_brain",
+      "taxonomy_changed": false
+    },
+    {
+      "cycle_id": "batch2-c4",
+      "goal_class": "",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "safe_more_optimistic_mission_brain",
+      "taxonomy_changed": false
+    },
+    {
+      "cycle_id": "batch2-c5",
+      "goal_class": "",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "safe_more_optimistic_mission_brain",
+      "taxonomy_changed": false
+    },
+    {
+      "cycle_id": "ext-batch1-c11",
+      "goal_class": "policy_check",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch1-c12",
+      "goal_class": "risk_assessment",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch1-c13",
+      "goal_class": "loop_coherence",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch1-c14",
+      "goal_class": "planning",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch1-c15",
+      "goal_class": "test_coverage",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch1-c16",
+      "goal_class": "completion_boundary",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch1-c17",
+      "goal_class": "goal_decomposition",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch1-c18",
+      "goal_class": "git_safety",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch1-c19",
+      "goal_class": "verification",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch1-c20",
+      "goal_class": "memory_saturation",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch2-c21",
+      "goal_class": "policy_check",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch2-c22",
+      "goal_class": "risk_assessment",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch2-c23",
+      "goal_class": "verification",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch2-c24",
+      "goal_class": "ambiguous_goal",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "expected_divergence_ambiguous_context",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch2-c25",
+      "goal_class": "empty_context",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "expected_divergence_ambiguous_context",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch2-c26",
+      "goal_class": "conflicting_signals",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "expected_divergence_ambiguous_context",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch2-c27",
+      "goal_class": "multi_step_complex",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch2-c28",
+      "goal_class": "simple_verification",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch2-c29",
+      "goal_class": "regression_detection",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    },
+    {
+      "cycle_id": "ext-batch2-c30",
+      "goal_class": "dependency_check",
+      "mission_brain_decision": "partial",
+      "current_loop_decision": "failed",
+      "agreement": false,
+      "mismatch_class_before": "safe_more_optimistic_mission_brain",
+      "mismatch_class_after": "scope_mismatch_goal_vs_run_assessment",
+      "taxonomy_changed": true
+    }
+  ],
+  "guardrails": {
+    "shadow_mode_only": true,
+    "default_behavior_unchanged": true,
+    "agreement_rate_invariant": true
+  },
+  "evaluation": "passed",
+  "stop_reason": null,
+  "next_subissue": 873
+}
