@@ -167,7 +167,7 @@ def create_router(deps) -> APIRouter:
 
     @router.get("/api/health")
     async def api_health() -> Dict[str, object]:
-        return {"status": "ok", "version": app.version, "time": time.time()}
+        return {"status": "ok", "version": "0.1.0", "time": time.time()}
 
     @router.get("/api/smw/health")
     async def api_smw_health() -> Dict[str, object]:
