@@ -1,0 +1,26 @@
+{
+  "suite": "mission_brain_hardening_826_replay",
+  "cases": [
+    {
+      "case_id": "fc_case_791_m2",
+      "declared_status_after_826": "partial",
+      "completion_policy_blocked": true
+    },
+    {
+      "case_id": "fc_case_792_m4",
+      "declared_status_after_826": "partial",
+      "completion_policy_blocked": true
+    },
+    {
+      "case_id": "manual_policy_parity_case",
+      "quality_passed": true,
+      "satisfaction_passed": true,
+      "diagnostics_present": true,
+      "declared_status_after_826": "partial",
+      "completion_policy_blocked": true
+    }
+  ],
+  "false_completed_count": 0,
+  "critical_false_completed_count": 0,
+  "manual_policy_alignment_guard_active": true
+}

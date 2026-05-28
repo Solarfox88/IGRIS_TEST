@@ -131,7 +131,7 @@ def test_quality_and_satisfaction_gate_pass_path():
     mission = translate_checklist_to_actions(_build_mission())
     mission = execute_mission_actions(mission, {action.id: f"printf ok-{action.id} > /tmp/{action.id}.txt" for action in mission.actions}, dry_run=False)
     quality = evaluate_quality_gate(mission)
-    mission.final_response = "architecture verification completed with evidence in x.py"
+    mission.final_response = "architecture verification completed with evidence in x.py; why unknown and clarified."
     satisfaction = evaluate_satisfaction_gate(mission)
     mission = build_final_response(mission, quality, satisfaction)
     assert quality["passed"] is True
