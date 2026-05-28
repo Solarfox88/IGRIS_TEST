@@ -1,0 +1,44 @@
+{
+  "scope": "mission_brain_operational_adoption_final_decision",
+  "issue": 794,
+  "metrics_10_of_10": {
+    "total_missions": 10,
+    "completed_count": 3,
+    "partial_count": 7,
+    "failed_count": 0,
+    "false_completed_count": 2,
+    "critical_false_completed_count": 0,
+    "false_partial_count": 1,
+    "false_failed_count": 0,
+    "quality_gate_accuracy": 0.3,
+    "satisfaction_gate_accuracy": 0.2,
+    "manual_review_alignment_rate": 0.8,
+    "average_report_usefulness_score": 0.747
+  },
+  "decision": {
+    "adoption_decision": "keep wrapper",
+    "integrate_deeper_allowed": false,
+    "reason": [
+      "false_completed is recurring (2/10) even if non-critical",
+      "quality and satisfaction gate accuracy are below deep-integration threshold",
+      "manual review alignment and report usefulness support controlled wrapper operation"
+    ]
+  },
+  "residual_risks": [
+    "wrapper-only recurring over-claim on completion",
+    "multi-step evidence depth often too shallow for robust completion",
+    "quality/satisfaction permissiveness on some completion paths"
+  ],
+  "remediation_backlog_prioritized": [
+    "increase action evidence depth for multi-step completion",
+    "tighten quality gate completion thresholds for multi-step paths",
+    "align deterministic completion policy with manual review strictness"
+  ],
+  "reconsider_integrate_deeper_conditions": [
+    "false_completed_count == 0 (or <=1 explained and non-recurring)",
+    "critical_false_completed_count == 0",
+    "quality_gate_accuracy >= 0.70",
+    "satisfaction_gate_accuracy >= 0.70",
+    "manual_review_alignment_rate >= 0.80 on fresh controlled real missions"
+  ]
+}
