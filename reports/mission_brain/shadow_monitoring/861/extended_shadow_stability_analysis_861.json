@@ -1,0 +1,55 @@
+{
+  "total_cumulative_cycles": 30,
+  "cycles_845_baseline": 10,
+  "cycles_batch1": 10,
+  "cycles_batch2": 10,
+  "agreement_rate_by_epoch": {
+    "baseline_845": 0.0,
+    "batch1_859": 0.0,
+    "batch2_860": 0.0
+  },
+  "stability_verdict": "structurally_zero",
+  "dominant_mismatch_class": "safe_more_optimistic_mission_brain",
+  "mismatch_distribution_20_new_cycles": {
+    "safe_more_optimistic_mission_brain": 20
+  },
+  "unique_goal_classes_20_cycles": 17,
+  "goal_class_distribution": {
+    "policy_check": 2,
+    "risk_assessment": 2,
+    "loop_coherence": 1,
+    "planning": 1,
+    "test_coverage": 1,
+    "completion_boundary": 1,
+    "goal_decomposition": 1,
+    "git_safety": 1,
+    "verification": 2,
+    "memory_saturation": 1,
+    "ambiguous_goal": 1,
+    "empty_context": 1,
+    "conflicting_signals": 1,
+    "multi_step_complex": 1,
+    "simple_verification": 1,
+    "regression_detection": 1,
+    "dependency_check": 1
+  },
+  "complexity_distribution": {
+    "moderate": 8,
+    "complex": 6,
+    "simple": 6
+  },
+  "sample_representativeness_score": 1.0,
+  "sample_representativeness_notes": "17 distinct goal classes across 20 new cycles; 3 complexity levels; 3 batches measured.",
+  "any_critical_false_completed_30_cycles": false,
+  "any_risk_introduced_30_cycles": false,
+  "rollback_path_status": "ok",
+  "final_readiness_trend": "stable",
+  "decision_distribution_mission_brain_20_cycles": {
+    "partial": 20
+  },
+  "decision_distribution_current_loop_20_cycles": {
+    "failed": 20
+  },
+  "evaluation": "passed",
+  "stop_reason": null
+}
