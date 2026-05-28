@@ -16,6 +16,11 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# Module-level path constants mirrored from server.py
+_MODULE_DIR = Path(__file__).resolve().parent.parent  # igris/web/
+TEMPLATES_DIR = _MODULE_DIR / "templates"
+STATIC_DIR = _MODULE_DIR / "static"
+
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 

@@ -14,11 +14,18 @@ def test_rank_ui_card_endpoint_available():
 
 
 def test_rank_ui_card_route_is_defined_once_in_create_app():
-    source = Path(server_module.__file__).read_text()
-    route = "@app.get('/api/rank/ui-card')"
-
-    assert source.count(route) == 1
-    assert source.index(route) < source.index("def run_app")
+    # After #725 refactor, routes live in igris/web/routers/routes_*.py
+    # using @router.get instead of @app.get in server.py.
+    routers_dir = Path(server_module.__file__).parent / "routers"
+    route = "@router.get('/api/rank/ui-card')"
+    total_count = sum(
+        f.read_text().count(route)
+        for f in routers_dir.glob("routes_*.py")
+    )
+    assert total_count == 1, (
+        f"Expected exactly 1 definition of {route!r} across router modules, "
+        f"found {total_count}"
+    )
 
 def test_rank_ui_card_response():
     client = TestClient(create_app())
