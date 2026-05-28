@@ -1,0 +1,76 @@
+{
+  "mission_id": "M8",
+  "mission_type": "multi_step_deep_evidence_required",
+  "issue_number": 777,
+  "issue_title": "Weightupdater: job schedulato ogni 50 run, calcola",
+  "input": "Esegui verifica multi-step profonda su #777: prova evidenza su logger, correlazione, updater, e prova che i 3 blocchi sono collegati in una catena verificabile.",
+  "available_context": {
+    "issue_url": "https://github.com/Solarfox88/IGRIS_GPT/issues/777",
+    "paths": [
+      "igris/core/context_manager.py",
+      "igris/core/integration_layer.py",
+      "igris/web/server.py"
+    ],
+    "category": "multi_step",
+    "requires_deep_evidence": true
+  },
+  "mission_brain_report_path": ".igris/mission_brain/reports/3225aa52-8433-41c8-8237-c32766a61a74.json",
+  "declared_status": "partial",
+  "observable_outcome": {
+    "quality_gate_passed": false,
+    "satisfaction_gate_passed": true,
+    "execution_results": [
+      {
+        "action_id": "ACT-001",
+        "command": "rg -n \"context_weights|weight\" igris/core/context_manager.py -S",
+        "returncode": 0,
+        "stdout": "501:        \"\"\"Build a lightweight context for code navigation tasks.\"\"\"\n",
+        "stderr": "",
+        "success": true,
+        "evidence": "process-executed"
+      },
+      {
+        "action_id": "ACT-002",
+        "command": "rg -n \"step outcome|Record step outcome\" igris/core/integration_layer.py -S",
+        "returncode": 0,
+        "stdout": "305:        \"\"\"Record step outcome to Decision Memory.\"\"\"\n",
+        "stderr": "",
+        "success": true,
+        "evidence": "process-executed"
+      },
+      {
+        "action_id": "ACT-003",
+        "command": "rg -n \"memory/summary|context summary\" igris/web/server.py -S",
+        "returncode": 0,
+        "stdout": "1313:    @app.get(\"/api/memory/summary\")\n",
+        "stderr": "",
+        "success": true,
+        "evidence": "process-executed"
+      },
+      {
+        "action_id": "ACT-004",
+        "command": "",
+        "returncode": null,
+        "stdout": "",
+        "stderr": "missing command mapping",
+        "success": false,
+        "evidence": "missing-command"
+      }
+    ],
+    "final_judgment": {
+      "technical_status": "failed",
+      "strategic_status": "passed",
+      "reason": "Mission 3225aa52-8433-41c8-8237-c32766a61a74 status=partial; quality_passed=False; satisfaction_passed=True."
+    }
+  },
+  "manual_reviewer_judgment": {
+    "status": "partial",
+    "alignment": "aligned",
+    "notes": "Classificazione prudente coerente con requisito di evidenza profonda.",
+    "usefulness_score": 0.73
+  },
+  "discrepancy_present": false,
+  "discrepancy_cause": "",
+  "recommended_follow_up": "Use this mission in false-completed root-cause isolation set.",
+  "runtime_overhead_note": "No deep loop integration; Mission Brain wrapper only."
+}
