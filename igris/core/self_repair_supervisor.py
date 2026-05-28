@@ -3215,11 +3215,16 @@ class SelfRepairSupervisor:
         }
         return aggregated, stage_failure, runtime_refresh_required
 
-    def _run_rank_phase(
+    def _run_preflight_phase(
         self,
+        run: Optional["SupervisorRun"],
         config: RankSupervisorConfig,
-        run: Optional[SupervisorRun] = None,
-    ) -> SupervisorRun:
+    ) -> "Tuple[SupervisorRun, Optional[Dict[str, Any]]]":
+        """Phase 1: init, git, baseline, smoke, assignment routing, mission plan.
+
+        Returns (run, None) when blocked or cancelled, (run, ctx) on success.
+        ctx keys: mission_plan, stage_statuses, assignment_decision, restart_command.
+        """
         run = run or SupervisorRun(run_id=uuid.uuid4().hex[:12], rank_id=config.rank_id)
         self._configure_run_tracking(run, config)
         run.add("start", "running", "Supervisor started", dry_run=config.dry_run)
@@ -3238,7 +3243,7 @@ class SelfRepairSupervisor:
                 )
         cancelled = self._cancel_if_requested(run)
         if cancelled is not None:
-            return cancelled
+            return cancelled, None
         restart_command = config.service_restart_command
         if config.defer_service_restart and restart_command:
             run.add(
@@ -3249,51 +3254,20 @@ class SelfRepairSupervisor:
             )
             restart_command = ""
 
-        def _post_run_roadmap_autoselect() -> None:
-            if not config.allow_roadmap_autoselect:
-                return
-            _next = self._select_next_roadmap_issue(config)
-            if not _next:
-                return
-            run.add(
-                "roadmap_next_target",
-                "selected",
-                f"Next roadmap target: #{_next['number']} — {_next.get('title', '')}",
-                issue_number=_next["number"],
-                issue_title=_next.get("title", ""),
-            )
-            try:
-                _hint_path = Path(self.project_root) / ".igris" / "next_roadmap_target.json"
-                _hint_path.parent.mkdir(parents=True, exist_ok=True)
-                _hint_path.write_text(
-                    json.dumps(
-                        {
-                            "issue_number": _next["number"],
-                            "issue_title": _next.get("title", ""),
-                            "selected_at": time.time(),
-                            "selected_by_run": run.run_id,
-                        },
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
-            except Exception as _e:
-                run.add("roadmap_next_target", "write_failed", str(_e))
-
         status = self.backend.git_status()
         run.add("git_status", "success" if status.success else "failure", _command_detail(status))
         cancelled = self._cancel_if_requested(run)
         if cancelled is not None:
-            return cancelled
+            return cancelled, None
         if not status.success:
-            return self._blocked(run, "infrastructure_bug", "Unable to read git status")
+            return self._blocked(run, "infrastructure_bug", "Unable to read git status"), None
         # Ignore untracked files (lines starting with "??") — they don't conflict with
         # git checkout/merge and are often leftover artefacts from previous runs.
         tracked_dirty = "\n".join(
             line for line in status.output.splitlines() if line and not line.startswith("??")
         ).strip()
         if tracked_dirty:
-            return self._blocked(run, "workspace_dirty", "Workspace is not clean")
+            return self._blocked(run, "workspace_dirty", "Workspace is not clean"), None
 
         head = self.backend.git_log_head()
         run.add("git_head", "success" if head.success else "failure", _command_detail(head))
@@ -3338,7 +3312,7 @@ class SelfRepairSupervisor:
             run.add("baseline_tests", "success" if baseline.success else "failure", _command_detail(baseline))
             cancelled = self._cancel_if_requested(run)
             if cancelled is not None:
-                return cancelled
+                return cancelled, None
             if not baseline.success:
                 run.add(
                     "baseline_diagnostics",
@@ -3367,9 +3341,9 @@ class SelfRepairSupervisor:
                         except OSError:
                             pass
                 elif _baseline_failure_is_transient(baseline, diagnostics):
-                    return self._blocked(run, "infra_timeout", "Baseline tests timed out or transient infra error")
+                    return self._blocked(run, "infra_timeout", "Baseline tests timed out or transient infra error"), None
                 else:
-                    return self._blocked(run, "pytest_failure", "Baseline tests failed")
+                    return self._blocked(run, "pytest_failure", "Baseline tests failed"), None
             elif head_sha:
                 try:
                     _save_baseline_cache(str(self.project_root), head_sha, policy="strict")
@@ -3381,9 +3355,9 @@ class SelfRepairSupervisor:
         run.add("baseline_smoke", "success" if smoke.success else "failure", _command_detail(smoke))
         cancelled = self._cancel_if_requested(run)
         if cancelled is not None:
-            return cancelled
+            return cancelled, None
         if not smoke.success:
-            return self._blocked(run, "infrastructure_bug", "Baseline smoke failed")
+            return self._blocked(run, "infrastructure_bug", "Baseline smoke failed"), None
 
         # Consult failure memory before any attempt — surface historical risk
         # so the operator can see early if similar goals have failed before.
@@ -3496,7 +3470,7 @@ class SelfRepairSupervisor:
                 config=config,
                 mission_plan=mission_plan,
                 stage_statuses=stage_statuses,
-            )
+            ), None
 
         # Pre-flight planning: read-only scope analysis before first attempt.
         # If the planning pass recommends decomposition, block proactively rather
@@ -3522,8 +3496,63 @@ class SelfRepairSupervisor:
                     config=config,
                     mission_plan=mission_plan,
                     stage_statuses=stage_statuses,
-                )
+                ), None
 
+        return run, {
+            "mission_plan": mission_plan,
+            "stage_statuses": stage_statuses,
+            "assignment_decision": assignment_decision,
+            "restart_command": restart_command,
+        }
+
+    def _maybe_autoselect_next_roadmap(
+        self,
+        run: "SupervisorRun",
+        config: RankSupervisorConfig,
+    ) -> None:
+        """Select and persist the next roadmap target after a completed run."""
+        if not config.allow_roadmap_autoselect:
+            return
+        _next = self._select_next_roadmap_issue(config)
+        if not _next:
+            return
+        run.add(
+            "roadmap_next_target",
+            "selected",
+            f"Next roadmap target: #{_next['number']} — {_next.get('title', '')}",
+            issue_number=_next["number"],
+            issue_title=_next.get("title", ""),
+        )
+        try:
+            _hint_path = Path(self.project_root) / ".igris" / "next_roadmap_target.json"
+            _hint_path.parent.mkdir(parents=True, exist_ok=True)
+            _hint_path.write_text(
+                json.dumps(
+                    {
+                        "issue_number": _next["number"],
+                        "issue_title": _next.get("title", ""),
+                        "selected_at": time.time(),
+                        "selected_by_run": run.run_id,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception as _e:
+            run.add("roadmap_next_target", "write_failed", str(_e))
+
+
+    def _run_rank_loop(
+        self,
+        run: SupervisorRun,
+        config: RankSupervisorConfig,
+        *,
+        mission_plan: MissionPlan,
+        stage_statuses: Dict[str, Dict[str, Any]],
+        assignment_decision: Optional[Any],
+        restart_command: str,
+    ) -> SupervisorRun:
+        """Phase 2: rank attempt loop and finalization."""
         repair_cycles = 0
         attempt = 1
         attempt_limit = config.max_rank_attempts
@@ -4107,7 +4136,7 @@ class SelfRepairSupervisor:
                         mission_plan=mission_plan,
                         stage_statuses=stage_statuses,
                     )
-                    _post_run_roadmap_autoselect()
+                    self._maybe_autoselect_next_roadmap(run, config)
                     return _done
 
             run.failure_class = failure
@@ -4217,8 +4246,9 @@ class SelfRepairSupervisor:
             _time_to_first_diff_s, _no_diff_count, _decompose_count,
             _attempt_outcomes, max(attempt - 1, 1),
         ))
-        _post_run_roadmap_autoselect()
+        self._maybe_autoselect_next_roadmap(run, config)
         return _done
+
 
     def _select_next_roadmap_issue(
         self, config: "RankSupervisorConfig"
@@ -5243,42 +5273,16 @@ class SelfRepairSupervisor:
                 return False
         return True
 
-    def _run_preflight_planning(
-        self,
-        config: RankSupervisorConfig,
-        run: Optional[SupervisorRun] = None,
-    ) -> SupervisorRun:
-        """Dedicated pre-flight planning phase hook."""
-        return self._run_rank_phase(config, run=run)
-
-    def _run_repair_phase(
-        self,
-        config: RankSupervisorConfig,
-        run: Optional[SupervisorRun] = None,
-    ) -> SupervisorRun:
-        """Dedicated repair phase hook."""
-        return self._run_rank_phase(config, run=run)
-
-    def _run_decomposition(
-        self,
-        config: RankSupervisorConfig,
-        run: Optional[SupervisorRun] = None,
-    ) -> SupervisorRun:
-        """Dedicated decomposition phase hook."""
-        return self._run_rank_phase(config, run=run)
-
-    def _finalize_run(self, run: SupervisorRun) -> SupervisorRun:
-        """Dedicated run finalization hook."""
-        return run
-
     def run(
         self,
         config: RankSupervisorConfig,
         run: Optional[SupervisorRun] = None,
     ) -> SupervisorRun:
-        """Thin orchestrator that delegates to focused phase methods."""
-        result = self._run_preflight_planning(config, run=run)
-        return self._finalize_run(result)
+        """Thin orchestrator — delegates to preflight and rank-loop phases."""
+        run, ctx = self._run_preflight_phase(run, config)
+        if ctx is None:
+            return run
+        return self._run_rank_loop(run, config, **ctx)
 
     def _stage_report_fragment(
         self,
