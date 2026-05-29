@@ -1331,6 +1331,81 @@ def _baseline_cache_path(project_root: str) -> Path:
     return Path(project_root) / ".igris" / "baseline_cache.json"
 
 
+# ---------------------------------------------------------------------------
+# Issue #626 — Delta baseline: detect pre-existing failures vs new regressions
+# ---------------------------------------------------------------------------
+
+def _known_failures_path(project_root: str) -> Path:
+    return Path(project_root) / ".igris" / "known_baseline_failures.json"
+
+
+def _load_known_baseline_failures(project_root: str, main_sha: str) -> Optional[List[str]]:
+    """Return the list of test nodes known to fail on *main_sha*, or None if not cached."""
+    path = _known_failures_path(project_root)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if str(data.get("main_sha", "")).strip() == str(main_sha).strip():
+            return list(data.get("failed_nodes", []))
+    except Exception:
+        pass
+    return None
+
+
+def _save_known_baseline_failures(
+    project_root: str, main_sha: str, failed_nodes: List[str]
+) -> None:
+    """Persist the set of pre-existing failures for *main_sha*."""
+    path = _known_failures_path(project_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data: Dict[str, Any] = {
+        "main_sha": str(main_sha),
+        "failed_nodes": list(failed_nodes),
+        "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    try:
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _get_main_sha(project_root: str) -> str:
+    """Return the current SHA of origin/main (or main if origin/main is absent)."""
+    import subprocess as _sp
+    for ref in ("origin/main", "main"):
+        r = _sp.run(
+            ["git", "rev-parse", ref],
+            capture_output=True, text=True, cwd=str(project_root),
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    return ""
+
+
+def _diff_vs_main_is_empty(project_root: str, main_sha: str) -> bool:
+    """True when HEAD has no diff relative to main (branch == main, no new commits)."""
+    import subprocess as _sp
+    if not main_sha:
+        return False
+    r = _sp.run(
+        ["git", "diff", "--quiet", main_sha, "HEAD"],
+        capture_output=True, cwd=str(project_root),
+    )
+    return r.returncode == 0
+
+
+def _delta_baseline_failures(
+    branch_failures: List[str], known_failures: List[str]
+) -> List[str]:
+    """Return failures present in *branch_failures* but NOT in *known_failures*.
+
+    These are genuine regressions introduced by the current branch.
+    """
+    known_set = set(known_failures)
+    return [f for f in branch_failures if f not in known_set]
+
+
 def _load_valid_baseline_cache(
     project_root: str, head_sha: str, force_revalidate: bool = False
 ) -> Optional[Dict[str, Any]]:
@@ -3354,7 +3429,64 @@ class SelfRepairSupervisor:
                 elif _baseline_failure_is_transient(baseline, diagnostics):
                     return self._blocked(run, "infra_timeout", "Baseline tests timed out or transient infra error"), None
                 else:
-                    return self._blocked(run, "pytest_failure", "Baseline tests failed"), None
+                    # Issue #626 — delta baseline: only block on NEW failures, not pre-existing ones.
+                    _diag_text = "\n".join([
+                        diagnostics.output or "", diagnostics.error or "",
+                    ]) if diagnostics else ""
+                    _branch_failures = _extract_failed_pytest_nodes(
+                        "\n".join([baseline.output or "", baseline.error or "", _diag_text])
+                    )
+                    _main_sha = _get_main_sha(str(self.project_root))
+                    _known = _load_known_baseline_failures(str(self.project_root), _main_sha) if _main_sha else None
+
+                    if _known is not None:
+                        # We have a record of pre-existing failures — compute delta.
+                        _delta = _delta_baseline_failures(_branch_failures, _known)
+                        if not _delta:
+                            # All failures are pre-existing — proceed.
+                            run.add(
+                                "baseline_gate", "warning",
+                                f"All {len(_branch_failures)} baseline failure(s) are pre-existing on "
+                                f"main ({_main_sha[:8]}) — proceeding.",
+                                policy="preexisting_failures",
+                                preexisting_count=len(_branch_failures),
+                                delta_count=0,
+                            )
+                            if head_sha:
+                                try:
+                                    _save_baseline_cache(
+                                        str(self.project_root), head_sha,
+                                        policy="preexisting_failures",
+                                    )
+                                except OSError:
+                                    pass
+                        else:
+                            return self._blocked(
+                                run, "pytest_failure",
+                                f"Baseline tests introduced {len(_delta)} new failure(s) "
+                                f"not present on main: {_delta[:5]}",
+                            ), None
+                    elif _main_sha and (head_sha == _main_sha or _diff_vs_main_is_empty(str(self.project_root), _main_sha)):
+                        # Running on main itself (or branch identical to main) — record as pre-existing.
+                        _save_known_baseline_failures(str(self.project_root), _main_sha, _branch_failures)
+                        run.add(
+                            "baseline_gate", "warning",
+                            f"Recorded {len(_branch_failures)} pre-existing failure(s) for "
+                            f"main {_main_sha[:8]} — proceeding without blocking.",
+                            policy="recording_preexisting_failures",
+                            known_count=len(_branch_failures),
+                        )
+                        if head_sha:
+                            try:
+                                _save_baseline_cache(
+                                    str(self.project_root), head_sha,
+                                    policy="preexisting_failures",
+                                )
+                            except OSError:
+                                pass
+                    else:
+                        # Unknown failures on a diverged branch — block conservatively.
+                        return self._blocked(run, "pytest_failure", "Baseline tests failed"), None
             elif head_sha:
                 try:
                     _save_baseline_cache(str(self.project_root), head_sha, policy="strict")
