@@ -302,7 +302,19 @@ class ContextManager:
         packet = ContextPacket(role=role, budget_chars=budget)
         truncated: List[str] = []
 
-        # 1. Mission context (always included, highest priority)
+        # Issue #524 — load section budget multipliers from weighter (best-effort)
+        _section_multipliers: Dict[str, float] = {}
+        try:
+            from igris.core.context_section_weighter import ContextSectionWeighter
+            _weighter = ContextSectionWeighter(self.project_root or ".")
+            _section_multipliers = _weighter.get_budget_multipliers()
+        except Exception:
+            pass
+
+        def _weighted_budget(base: int, section: str) -> int:
+            return max(0, int(base * _section_multipliers.get(section, 1.0)))
+
+        # 1. Mission context (always included, highest priority — not weighted)
         mission_text = self._build_mission_context(goal, mission_id, mission_status)
         packet.mission_context = self._fit(mission_text, available, "mission")
         available -= len(packet.mission_context)
@@ -311,7 +323,7 @@ class ContextManager:
 
         # 2. Error context (high priority — errors drive next action)
         error_text = summarize_errors(recent_errors or [])
-        error_budget = min(available // 4, 4000)
+        error_budget = _weighted_budget(min(available // 4, 4000), "error_context")
         packet.error_context = self._fit(error_text, error_budget, "errors")
         available -= len(packet.error_context)
         if len(error_text) > len(packet.error_context):
@@ -319,7 +331,7 @@ class ContextManager:
 
         # 3. Recent actions (important for avoiding loops)
         action_text = condense_actions(recent_actions or [])
-        action_budget = min(available // 4, 4000)
+        action_budget = _weighted_budget(min(available // 4, 4000), "recent_actions")
         packet.recent_actions = self._fit(action_text, action_budget, "actions")
         available -= len(packet.recent_actions)
         if len(action_text) > len(packet.recent_actions):
@@ -327,7 +339,7 @@ class ContextManager:
 
         # 4. State context
         state_text = self._build_state_context(world_state or {})
-        state_budget = min(available // 5, 2000)
+        state_budget = _weighted_budget(min(available // 5, 2000), "state_context")
         packet.state_context = self._fit(state_text, state_budget, "state")
         available -= len(packet.state_context)
         if len(state_text) > len(packet.state_context):
@@ -346,7 +358,7 @@ class ContextManager:
         except Exception:
             pass
         memory_text = self._build_memory_context(graph_items)
-        memory_budget = min(available // 4, 3000)
+        memory_budget = _weighted_budget(min(available // 4, 3000), "memory_context")
         packet.memory_context = self._fit(memory_text, memory_budget, "memory")
         available -= len(packet.memory_context)
         if len(memory_text) > len(packet.memory_context):
