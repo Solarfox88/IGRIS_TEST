@@ -8609,3 +8609,103 @@ def test_force_revalidate_from_dict():
     from igris.core.self_repair_supervisor import RankSupervisorConfig
     cfg = RankSupervisorConfig.from_dict({"goal": "test", "force_revalidate_baseline": True})
     assert cfg.force_revalidate_baseline is True
+
+
+# ---------------------------------------------------------------------------
+# Issue #626 — Delta baseline helpers
+# ---------------------------------------------------------------------------
+
+class TestDeltaBaseline:
+    """Tests for known_baseline_failures persistence and delta computation."""
+
+    def test_save_and_load_known_failures(self, tmp_path):
+        from igris.core.self_repair_supervisor import (
+            _save_known_baseline_failures, _load_known_baseline_failures,
+        )
+        nodes = ["tests/foo.py::TestA::test_x", "tests/bar.py::TestB::test_y"]
+        _save_known_baseline_failures(str(tmp_path), "abc123", nodes)
+        result = _load_known_baseline_failures(str(tmp_path), "abc123")
+        assert result == nodes
+
+    def test_load_returns_none_when_file_missing(self, tmp_path):
+        from igris.core.self_repair_supervisor import _load_known_baseline_failures
+        assert _load_known_baseline_failures(str(tmp_path), "sha999") is None
+
+    def test_load_returns_none_on_sha_mismatch(self, tmp_path):
+        from igris.core.self_repair_supervisor import (
+            _save_known_baseline_failures, _load_known_baseline_failures,
+        )
+        _save_known_baseline_failures(str(tmp_path), "sha_A", ["tests/a.py::T::t"])
+        assert _load_known_baseline_failures(str(tmp_path), "sha_B") is None
+
+    def test_delta_empty_when_all_preexisting(self):
+        from igris.core.self_repair_supervisor import _delta_baseline_failures
+        known = ["tests/a.py::T::t1", "tests/b.py::T::t2"]
+        branch = ["tests/a.py::T::t1", "tests/b.py::T::t2"]
+        assert _delta_baseline_failures(branch, known) == []
+
+    def test_delta_returns_new_failures(self):
+        from igris.core.self_repair_supervisor import _delta_baseline_failures
+        known = ["tests/a.py::T::t1"]
+        branch = ["tests/a.py::T::t1", "tests/b.py::T::t_new"]
+        delta = _delta_baseline_failures(branch, known)
+        assert delta == ["tests/b.py::T::t_new"]
+
+    def test_delta_empty_known_blocks_all(self):
+        from igris.core.self_repair_supervisor import _delta_baseline_failures
+        # No known failures — all branch failures are new
+        delta = _delta_baseline_failures(["tests/x.py::T::t"], [])
+        assert delta == ["tests/x.py::T::t"]
+
+    def test_save_overwrites_previous_sha(self, tmp_path):
+        from igris.core.self_repair_supervisor import (
+            _save_known_baseline_failures, _load_known_baseline_failures,
+        )
+        _save_known_baseline_failures(str(tmp_path), "old_sha", ["tests/old.py::T::t"])
+        _save_known_baseline_failures(str(tmp_path), "new_sha", ["tests/new.py::T::t"])
+        assert _load_known_baseline_failures(str(tmp_path), "old_sha") is None
+        assert _load_known_baseline_failures(str(tmp_path), "new_sha") == ["tests/new.py::T::t"]
+
+    def test_save_creates_parent_dirs(self, tmp_path):
+        from igris.core.self_repair_supervisor import _save_known_baseline_failures, _known_failures_path
+        deep = tmp_path / "a" / "b" / "c"
+        _save_known_baseline_failures(str(deep), "sha1", ["tests/x.py::T::t"])
+        assert _known_failures_path(str(deep)).exists()
+
+    def test_load_tolerates_corrupt_json(self, tmp_path):
+        from igris.core.self_repair_supervisor import (
+            _load_known_baseline_failures, _known_failures_path,
+        )
+        p = _known_failures_path(str(tmp_path))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("NOT VALID JSON", encoding="utf-8")
+        assert _load_known_baseline_failures(str(tmp_path), "any") is None
+
+    def test_delta_order_preserved(self):
+        from igris.core.self_repair_supervisor import _delta_baseline_failures
+        known = ["tests/a.py::T::t1"]
+        branch = ["tests/a.py::T::t1", "tests/b.py::T::t2", "tests/c.py::T::t3"]
+        delta = _delta_baseline_failures(branch, known)
+        assert delta == ["tests/b.py::T::t2", "tests/c.py::T::t3"]
+
+    def test_diff_vs_main_empty_on_same_sha(self, tmp_path, monkeypatch):
+        """_diff_vs_main_is_empty returns True when git diff exits 0."""
+        import subprocess
+        from igris.core.self_repair_supervisor import _diff_vs_main_is_empty
+
+        class FakeResult:
+            returncode = 0
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeResult())
+        assert _diff_vs_main_is_empty(str(tmp_path), "abc") is True
+
+    def test_diff_vs_main_not_empty_on_diverged(self, tmp_path, monkeypatch):
+        """_diff_vs_main_is_empty returns False when git diff exits non-zero."""
+        import subprocess
+        from igris.core.self_repair_supervisor import _diff_vs_main_is_empty
+
+        class FakeResult:
+            returncode = 1
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeResult())
+        assert _diff_vs_main_is_empty(str(tmp_path), "abc") is False
