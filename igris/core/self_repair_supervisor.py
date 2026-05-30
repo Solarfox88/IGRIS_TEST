@@ -3915,7 +3915,17 @@ class SelfRepairSupervisor:
                 max_reasoning_steps = max(40, int(os.getenv("IGRIS_RANK_MAX_STEPS", "120")))
                 reasoning_timeout = config.reasoning_timeout_seconds
                 if self._goal_needs_preflight_decomposition(config.goal):
-                    reasoning_timeout = min(reasoning_timeout, int(os.getenv("IGRIS_LARGE_MISSION_REASONING_TIMEOUT", "240")))
+                    # Cap the timeout for LOCAL profiles only — phi4-mini can't make progress
+                    # on large missions and would just spin, wasting time.
+                    # Cloud profiles (strong_execution, cheap/strong_cloud_reasoning) need the
+                    # FULL timeout (900s) to reason through multi-step implementation tasks.
+                    _LOCAL_PROFILES_SET = {"local_light", "local_coder", "mini_execution"}
+                    _is_local = (_routed_profile or "") in _LOCAL_PROFILES_SET
+                    if _is_local:
+                        reasoning_timeout = min(
+                            reasoning_timeout,
+                            int(os.getenv("IGRIS_LARGE_MISSION_REASONING_TIMEOUT", "240")),
+                        )
                 reasoning = self.backend.run_reasoning(
                     config.goal,
                     max_steps=max_reasoning_steps,
