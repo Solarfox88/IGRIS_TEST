@@ -163,6 +163,7 @@ def mbop_phase9_quality_gate(
     project_root: str,
     modified_files: List[str],
     run_pytest: bool = True,
+    diff_text: str = "",
 ) -> MBOPQualityGateResult:
     """Run post-completion quality gate (Phase 9)."""
     result = MBOPQualityGateResult()
@@ -180,6 +181,28 @@ def mbop_phase9_quality_gate(
                     stub_found.append(f"{rel_path}:{pat}")
         except OSError:
             pass
+    result.stub_patterns_found = stub_found
+
+    # --- Destructive patch detection ---
+    # If a file loses far more lines than it gains, flag it as potentially destructive.
+    # Example: supervisor_reasoning_worker.py lost 163 lines and gained 117 — a net -46
+    # where most of the original implementation was deleted.
+    if diff_text:
+        for rel_path in modified_files:
+            if not rel_path.endswith(".py"):
+                continue
+            lines_added = sum(
+                1 for ln in diff_text.splitlines()
+                if ln.startswith("+") and not ln.startswith("+++")
+                and rel_path.split("/")[-1] in diff_text.split(rel_path)[0][-200:]
+            )
+            lines_removed = sum(
+                1 for ln in diff_text.splitlines()
+                if ln.startswith("-") and not ln.startswith("---")
+                and rel_path.split("/")[-1] in diff_text.split(rel_path)[0][-200:]
+            )
+            if lines_removed > 50 and lines_added < lines_removed * 0.6:
+                stub_found.append(f"{rel_path}:destructive_rewrite (removed={lines_removed} added={lines_added})")
     result.stub_patterns_found = stub_found
 
     test_files = [f for f in modified_files if re.search(r"test.*\.py$|\.py.*test", f)]
@@ -252,8 +275,9 @@ def mbop_phase10_satisfaction_gate(
     result = MBOPSatisfactionGateResult()
     criteria = intake.acceptance_criteria
     if not criteria:
+        # No structured ACs: advisory pass (not vacuously true — issue may have implicit ACs)
         result.passed = True
-        result.evidence = "no AC defined in issue — satisfaction gate vacuously PASS"
+        result.evidence = "no structured ACs in issue — satisfaction gate advisory (not verified)"
         return result
     haystack = (diff_text + "\n" + commit_message).lower()
     for ac in criteria:
@@ -283,6 +307,8 @@ def mbop_phase11_post_task_eval(
     satisfaction: MBOPSatisfactionGateResult,
     run_duration_seconds: float,
     failure_class: str = "",
+    run_status: str = "",
+    completion_mode: str = "",
 ) -> MBOPEvalResult:
     """Generate a brief post-task evaluation summary (Phase 11)."""
     lessons = []
@@ -290,10 +316,17 @@ def mbop_phase11_post_task_eval(
         lessons.append(f"Stubs detected in output: {quality.stub_patterns_found[:2]}")
     if quality.pytest_ran and not quality.pytest_passed:
         lessons.append("Tests failed at completion — needs re-run")
+    if not quality.test_files_checked:
+        lessons.append("No test files in diff — tests not verified")
     if satisfaction.criteria_missing:
         lessons.append(f"ACs not addressed: {satisfaction.criteria_missing[:2]}")
     if failure_class:
         lessons.append(f"failure_class={failure_class}")
+    # Detect degraded completions: reasoning stopped without clean finish
+    if run_status == "completed" and completion_mode in ("degraded", "no_diff_repair", "stopped"):
+        lessons.append(f"reasoning stopped without clean finish (mode={completion_mode}) — review diff carefully")
+    elif run_status in ("blocked", "interrupted") and not failure_class:
+        lessons.append(f"run ended with status={run_status} but no failure_class recorded")
     qg = "PASS" if quality.passed else "FAIL"
     sg = "PASS" if satisfaction.passed else "ADVISORY"
     summary = (
@@ -499,9 +532,16 @@ def mbop_post_run(
         except Exception:  # noqa: BLE001
             pass
 
+        # Get diff text early — used by Phase 9 destructive-patch detection and Phase 10
+        diff_text_early = ""
+        try:
+            diff_text_early = _get_diff_text(project_root)
+        except Exception:  # noqa: BLE001
+            pass
+
         quality = MBOPQualityGateResult()
         try:
-            quality = mbop_phase9_quality_gate(project_root, modified_files)
+            quality = mbop_phase9_quality_gate(project_root, modified_files, diff_text=diff_text_early)
         except Exception as exc:  # noqa: BLE001
             quality.error = str(exc)
 
@@ -572,7 +612,11 @@ def mbop_post_run(
         # ---- Phase 11: Post-Task Evaluation ----
         eval_result = MBOPEvalResult()
         try:
-            eval_result = mbop_phase11_post_task_eval(intake, quality, satisfaction, duration, failure_class)
+            completion_mode = getattr(run, "completion_mode", "") or getattr(run, "degraded_reason", "") or ""
+            eval_result = mbop_phase11_post_task_eval(
+                intake, quality, satisfaction, duration, failure_class,
+                run_status=run_status, completion_mode=completion_mode,
+            )
         except Exception:  # noqa: BLE001
             pass
         eval_detail = f"MBOP Phase 11 Post-Task Eval: {eval_result.summary}"
