@@ -185,22 +185,67 @@ def mbop_phase9_quality_gate(
     root = Path(project_root)
 
     stub_found: List[str] = []
+
+    # Extract added lines per file from the diff so we scan only what IGRIS wrote,
+    # not pre-existing code. Scanning the full file causes false positives when
+    # existing code mentions stub keywords as string literals (e.g. quality-gate code
+    # that checks `"# placeholder"` as a marker string).
+    _diff_added: dict = {}  # rel_path → list of (line_no, line_text) added lines
+    if diff_text:
+        _current_file = ""
+        _diff_line_no = 0
+        for _ln in diff_text.splitlines():
+            if _ln.startswith("--- ") or _ln.startswith("+++ "):
+                if _ln.startswith("+++ b/"):
+                    _current_file = _ln[6:].strip()
+                    _diff_line_no = 0
+                continue
+            if _ln.startswith("@@"):
+                # Extract new-file start line from @@ -a,b +c,d @@ header
+                try:
+                    _diff_line_no = int(_ln.split("+")[1].split(",")[0].split(" ")[0]) - 1
+                except (IndexError, ValueError):
+                    _diff_line_no = 0
+                continue
+            if _ln.startswith("+"):
+                _diff_line_no += 1
+                if _current_file:
+                    _diff_added.setdefault(_current_file, []).append((_diff_line_no, _ln[1:]))
+            elif not _ln.startswith("-"):
+                _diff_line_no += 1
+
     for rel_path in modified_files:
         full = root / rel_path
         if not full.exists() or not rel_path.endswith(".py"):
             continue
         try:
-            content = full.read_text(encoding="utf-8", errors="replace")
-            content_lower = content.lower()
-            for pat in _STUB_PATTERNS:
-                if pat in content_lower:
-                    stub_found.append(f"{rel_path}:{pat}")
-            # Regex patterns on test files only (avoid false positives in production code)
-            if "test" in rel_path.lower():
-                for line_no, line in enumerate(content.splitlines(), 1):
-                    for rpat in _STUB_REGEX_PATTERNS:
-                        if rpat.search(line):
-                            stub_found.append(f"{rel_path}:{line_no}:{rpat.pattern}")
+            # Prefer diff-based scan (only added lines) to avoid false positives on
+            # pre-existing code. Fall back to full file scan when diff is unavailable.
+            added_lines = _diff_added.get(rel_path) or _diff_added.get("igris/" + rel_path) or []
+            if added_lines:
+                # Scan only the lines IGRIS added
+                added_text = "\n".join(txt for _, txt in added_lines)
+                added_lower = added_text.lower()
+                for pat in _STUB_PATTERNS:
+                    if pat in added_lower:
+                        stub_found.append(f"{rel_path}:{pat}")
+                if "test" in rel_path.lower():
+                    for line_no, line in added_lines:
+                        for rpat in _STUB_REGEX_PATTERNS:
+                            if rpat.search(line):
+                                stub_found.append(f"{rel_path}:{line_no}:{rpat.pattern}")
+            else:
+                # No diff available — full-file scan (less precise, acceptable for CI)
+                content = full.read_text(encoding="utf-8", errors="replace")
+                content_lower = content.lower()
+                for pat in _STUB_PATTERNS:
+                    if pat in content_lower:
+                        stub_found.append(f"{rel_path}:{pat}")
+                if "test" in rel_path.lower():
+                    for line_no, line in enumerate(content.splitlines(), 1):
+                        for rpat in _STUB_REGEX_PATTERNS:
+                            if rpat.search(line):
+                                stub_found.append(f"{rel_path}:{line_no}:{rpat.pattern}")
         except OSError:
             pass
     result.stub_patterns_found = stub_found
