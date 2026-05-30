@@ -3900,6 +3900,10 @@ class SelfRepairSupervisor:
                 return cancelled
             branch = f"rank-{config.rank_id.lower()}-{int(time.time())}-{attempt}"
             run.branch = branch
+            # Always start rank branch from latest main so every run has all committed fixes.
+            _pre_checkout = self.backend.checkout_main()
+            if not _pre_checkout.success:
+                run.add("rank_branch_pre_checkout", "warning", f"Could not checkout main before branch creation: {_command_detail(_pre_checkout)}")
             branch_result = self.backend.create_branch(branch)
             run.add("rank_branch", "success" if branch_result.success else "failure", _command_detail(branch_result), branch=branch)
             cancelled = self._cancel_if_requested(run, mission_plan=mission_plan, stage_statuses=stage_statuses)
