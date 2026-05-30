@@ -5134,10 +5134,16 @@ class SelfRepairSupervisor:
         # Scaffold a placeholder test that accepts both 200 (implemented) and 404/405
         # (endpoint not yet added).  A hard assert==200 on an unimplemented endpoint
         # wastes the full pytest run (~16 min) and leaves workspace dirty.
+        # The tmp_path fixture sets PROJECT_ROOT to a temp directory so the watchdog
+        # lifespan task has nothing to do and does not block pytest for minutes.
         content = (
+            "import os\n\n"
             "from fastapi.testclient import TestClient\n\n"
             "from igris.web.server import create_app\n\n\n"
-            f"def test_{test_slug}():\n"
+            f"def test_{test_slug}(tmp_path):\n"
+            "    # Isolate watchdog from real project during scaffold test.\n"
+            "    os.environ[\"PROJECT_ROOT\"] = str(tmp_path)\n"
+            "    os.environ[\"WORKSPACE_ROOT\"] = str(tmp_path)\n"
             "    client = TestClient(create_app())\n"
             f"    response = client.get(\"{endpoint}\")\n"
             "    # Accept 200 (implemented) or 404/405 (scaffold placeholder — not yet implemented).\n"
