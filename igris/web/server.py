@@ -643,6 +643,12 @@ def create_app() -> FastAPI:
     except Exception:
         pass  # best-effort — never block app startup
 
+    try:
+        from igris.api.routes.github_read import router as _github_read_router
+        app.include_router(_github_read_router)
+    except Exception:
+        pass  # best-effort — never block app startup
+
     return app
 
 
