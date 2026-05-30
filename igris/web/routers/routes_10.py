@@ -129,12 +129,30 @@ def create_router(deps) -> APIRouter:
 
     @router.get("/api/rank/runs/{run_id}")
     async def api_rank_run_detail(run_id: str) -> Dict[str, object]:
-        """Return one supervised rank run."""
+        """Return one supervised rank run.
+
+        Falls back to the on-disk supervisor_runs.json archive when the run is
+        no longer in the in-memory RUN_STORE (e.g. after a service restart).
+        This prevents zombie poll loops where a caller keeps hitting 404 for a
+        run that completed before the last restart.
+        """
         from igris.core.self_repair_supervisor import get_supervised_run
         run = get_supervised_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="rank run not found")
-        return run.to_dict()
+        if run is not None:
+            return run.to_dict()
+        # Fallback: check on-disk archive so callers receive a terminal status
+        # (blocked/completed) instead of 404, which stops poll loops.
+        try:
+            _runs_path = Path(CONFIG.project_root) / ".igris" / "supervisor_runs.json"
+            if _runs_path.exists():
+                _payload = json.loads(_runs_path.read_text(encoding="utf-8"))
+                _record = (_payload.get("runs") or {}).get(run_id)
+                if _record and isinstance(_record, dict):
+                    # Return the archived snapshot with an explicit archived flag
+                    return {**_record, "archived": True, "run_id": run_id}
+        except Exception:
+            pass
+        raise HTTPException(status_code=404, detail="rank run not found")
 
     @router.post("/api/rank/runs/{run_id}/cancel")
     async def api_rank_run_cancel(run_id: str, request: Request) -> Dict[str, object]:

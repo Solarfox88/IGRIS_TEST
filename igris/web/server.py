@@ -440,13 +440,27 @@ async def _watchdog_loop(project_root: str) -> None:
                     _watchdog_logger.info("Watchdog: starting run for issue #%s — %s", number, title)
                     _run_budget = max(0.0, float(os.getenv("IGRIS_MAX_COST_PER_RUN", "3.0") or "3.0"))
                     _max_escalations = max(0, int(os.getenv("IGRIS_MAX_ESCALATIONS_PER_RUN", "3") or "3"))
+                    # Issues with "no-decompose" label are leaf sub-issues created by
+                    # a prior decomposition pass — they must be implemented directly,
+                    # never decomposed further. Respect this by disabling auto-subissues.
+                    _issue_labels = [
+                        l.get("name", "").lower()
+                        for l in (issue.get("labels") or [])
+                    ]
+                    _is_leaf_subissue = "no-decompose" in _issue_labels
+                    if _is_leaf_subissue:
+                        _watchdog_logger.info(
+                            "Watchdog: issue #%d has no-decompose label — disabling auto-subissues",
+                            number,
+                        )
                     launched = start_supervised_rank_async(
                         {
                             "goal": goal,
                             "github_issue": number,
                             "allow_merge_if_green": True,
                             "allow_auto_subissues": (
-                                str(os.getenv("IGRIS_ALLOW_AUTO_SUBISSUES_DEFAULT", "true")).strip().lower()
+                                not _is_leaf_subissue
+                                and str(os.getenv("IGRIS_ALLOW_AUTO_SUBISSUES_DEFAULT", "true")).strip().lower()
                                 not in {"0", "false", "no", "off"}
                             ),
                             "autochain_depth": 1,
@@ -484,7 +498,7 @@ async def _watchdog_loop(project_root: str) -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    project_root = str(Path(__file__).resolve().parents[2])
+    project_root = str(CONFIG.project_root)
     task = asyncio.create_task(_watchdog_loop(project_root))
     _watchdog_logger.info("Watchdog started (poll=%ds)", _WATCHDOG_POLL_SECONDS)
     from igris.core.meta_watchdog import start_smw
@@ -577,6 +591,13 @@ def create_app() -> FastAPI:
         routes_06, routes_07, routes_08, routes_09, routes_10,
     ):
         app.include_router(_mod.create_router(deps))
+
+    # ---- Register modular API routers (igris/api/) ----
+    try:
+        from igris.api.routes.github_admin import router as _github_admin_router
+        app.include_router(_github_admin_router)
+    except Exception:
+        pass  # best-effort — never block app startup
 
     return app
 

@@ -82,7 +82,13 @@ def apply_security_middleware(app: FastAPI) -> None:
         # ---- Rate limiting ----
         now = time.time()
         _rate_buckets[client_ip] = [t for t in _rate_buckets[client_ip] if now - t < 60]
-        is_destructive = any(path.startswith(p) for p in _DESTRUCTIVE_PATH_PREFIXES)
+        # GET requests to /api/rank/runs/{id} are read-only status checks — do not
+        # classify them as destructive even though the path prefix matches.
+        _method = request.method.upper()
+        is_destructive = (
+            any(path.startswith(p) for p in _DESTRUCTIVE_PATH_PREFIXES)
+            and _method not in ("GET", "HEAD", "OPTIONS")
+        )
         limit = _rate_destructive if is_destructive else _rate_standard
         if len(_rate_buckets[client_ip]) >= limit:
             return JSONResponse(
