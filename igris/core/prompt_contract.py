@@ -90,6 +90,13 @@ Respond with exactly one JSON object (no markdown, no explanation outside JSON):
 10. Prefer structured tools over raw shell commands.
 11. If you must use shell, prefer "shell_template" over "raw_shell_proposal".
 12. For "raw_shell_proposal", the command will be analyzed by the Command Risk Engine before execution.
+13. CONSUME BEFORE EXPLORING: If discovered_files, search_matched_files, or last_tool_result
+    appear in Current State, your NEXT action MUST read or act on those results. Do NOT issue
+    another find_files or search_code when you already have results waiting to be consumed.
+14. PROGRESSIVE EXECUTION: Follow this sequence for every task and never skip steps backward:
+    find/search → read → modify/create → run_tests → finish.
+    After reading a file, your next action modifies it or creates the required artifact — NOT
+    another search. After writing code, run tests. After tests pass, finish.
 
 ## Current Mission
 {mission_context}
@@ -102,7 +109,7 @@ Respond with exactly one JSON object (no markdown, no explanation outside JSON):
 
 ## Available Context
 {file_context}
-"""
+{examples_context}"""
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +167,7 @@ def build_reasoning_prompt(
     state_context: str = "No state information available.",
     recent_actions: str = "No recent actions.",
     file_context: str = "No files loaded.",
+    examples_context: str = "",
 ) -> str:
     """Build the complete system prompt for the reasoning loop.
 
@@ -169,6 +177,7 @@ def build_reasoning_prompt(
         state_context: Current world state summary
         recent_actions: Recent action history and results
         file_context: Relevant file contents / code context
+        examples_context: Optional CoT step-by-step examples (#1043 fix)
 
     Returns:
         Complete system prompt string
@@ -186,6 +195,7 @@ def build_reasoning_prompt(
         state_context=state_context,
         recent_actions=recent_actions,
         file_context=file_context,
+        examples_context=("\n" + examples_context) if examples_context else "",
     )
 
 
@@ -404,6 +414,278 @@ EXAMPLE_SCENARIOS: List[Dict[str, Any]] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Chain-of-thought multi-step examples (#1043)
+# These show complete thought→action→result sequences, not isolated actions.
+# ---------------------------------------------------------------------------
+
+CHAIN_OF_THOUGHT_EXAMPLES: List[Dict[str, Any]] = [
+    {
+        "scenario": "Add a new API endpoint end-to-end (5-step chain)",
+        "goal": "Add /api/version-info endpoint with tests",
+        "chain": [
+            {
+                "step": 1,
+                "thought": "I need to add /api/version-info. First I should understand the existing route patterns in server.py.",
+                "action": {
+                    "mode": "coder",
+                    "action_type": "read_file_range",
+                    "reason": "Read server.py to understand existing endpoint pattern before adding new one",
+                    "parameters": {"path": "igris/web/server.py", "start": 1, "end": 60},
+                    "expected_effect": "See how existing endpoints are defined",
+                    "risk_hint": "low",
+                    "confidence": 0.9,
+                    "required_preconditions": [],
+                    "success_check": {"has_content": True},
+                    "fallback_if_blocked": "search_code",
+                },
+                "observed_result": "server.py loaded — endpoints use @router.get decorator, router included at line 45",
+            },
+            {
+                "step": 2,
+                "thought": "I now know the pattern. I will insert the /api/version-info endpoint after the last @router.get block using insert_after.",
+                "action": {
+                    "mode": "coder",
+                    "action_type": "insert_after",
+                    "reason": "Add /api/version-info endpoint using the existing router pattern discovered in step 1",
+                    "parameters": {
+                        "path": "igris/web/server.py",
+                        "anchor": "@router.get(\"/api/status\")",
+                        "content": "\n@router.get(\"/api/version-info\")\ndef version_info():\n    return {\"version\": \"1.0\", \"name\": \"igris\"}\n",
+                    },
+                    "expected_effect": "/api/version-info route added to server.py",
+                    "risk_hint": "medium",
+                    "confidence": 0.85,
+                    "required_preconditions": ["read: igris/web/server.py"],
+                    "success_check": {"file_modified": "igris/web/server.py"},
+                    "fallback_if_blocked": "propose_patch",
+                },
+                "observed_result": "insert_after succeeded — server.py now contains /api/version-info",
+            },
+            {
+                "step": 3,
+                "thought": "Endpoint added. Now I need a test file. I'll write tests/test_version_info.py using FastAPI TestClient.",
+                "action": {
+                    "mode": "coder",
+                    "action_type": "write_file",
+                    "reason": "Create test file for /api/version-info using TestClient(create_app())",
+                    "parameters": {
+                        "path": "tests/test_version_info.py",
+                        "content": "from fastapi.testclient import TestClient\nfrom igris.web.server import create_app\n\nclient = TestClient(create_app())\n\ndef test_version_info_status():\n    r = client.get(\"/api/version-info\")\n    assert r.status_code == 200\n\ndef test_version_info_keys():\n    r = client.get(\"/api/version-info\")\n    data = r.json()\n    assert \"version\" in data\n",
+                    },
+                    "expected_effect": "tests/test_version_info.py created with endpoint coverage",
+                    "risk_hint": "low",
+                    "confidence": 0.9,
+                    "required_preconditions": ["code_written: igris/web/server.py"],
+                    "success_check": {"file_exists": "tests/test_version_info.py"},
+                    "fallback_if_blocked": None,
+                },
+                "observed_result": "tests/test_version_info.py created successfully",
+            },
+            {
+                "step": 4,
+                "thought": "Code and tests written. Run pytest to verify everything passes.",
+                "action": {
+                    "mode": "tester",
+                    "action_type": "run_tests",
+                    "reason": "Verify the new endpoint and test file work correctly",
+                    "parameters": {"target": "tests/test_version_info.py", "args": "-v"},
+                    "expected_effect": "2 tests pass for /api/version-info",
+                    "risk_hint": "low",
+                    "confidence": 0.85,
+                    "required_preconditions": ["file_written: tests/test_version_info.py"],
+                    "success_check": {"exit_code": 0},
+                    "fallback_if_blocked": None,
+                },
+                "observed_result": "2 passed in 0.8s — tests pass",
+            },
+            {
+                "step": 5,
+                "thought": "All done. Endpoint added, tests pass. Declare completion.",
+                "action": {
+                    "mode": "reporter",
+                    "action_type": "finish",
+                    "reason": "Goal achieved: /api/version-info endpoint added and tested",
+                    "parameters": {
+                        "summary": "Added /api/version-info endpoint to igris/web/server.py. Created tests/test_version_info.py with 2 tests. All tests pass.",
+                        "files_modified": ["igris/web/server.py", "tests/test_version_info.py"],
+                        "tests_passed": True,
+                    },
+                    "expected_effect": "Mission marked complete",
+                    "risk_hint": "low",
+                    "confidence": 0.98,
+                    "required_preconditions": ["tests_pass"],
+                    "success_check": {},
+                    "fallback_if_blocked": None,
+                },
+                "observed_result": "Mission complete",
+            },
+        ],
+    },
+    {
+        "scenario": "Fix ImportError / missing symbol (4-step chain)",
+        "goal": "Fix pytest collection error: cannot import 'MemoryRetriever' from 'igris.core.long_term_memory'",
+        "chain": [
+            {
+                "step": 1,
+                "thought": "The test tries to import MemoryRetriever from igris.core.long_term_memory. I need to read the test to understand the expected interface.",
+                "action": {
+                    "mode": "coder",
+                    "action_type": "search_code",
+                    "reason": "Find all usages of MemoryRetriever in tests to understand its interface",
+                    "parameters": {"pattern": "MemoryRetriever", "path": "tests/"},
+                    "expected_effect": "See how MemoryRetriever is instantiated and used",
+                    "risk_hint": "low",
+                    "confidence": 0.9,
+                    "required_preconditions": [],
+                    "success_check": {"has_results": True},
+                    "fallback_if_blocked": "find_files",
+                },
+                "observed_result": "tests/test_long_term_memory.py line 15: mr = MemoryRetriever(memory); mr.retrieve_recent('domain', limit=5)",
+            },
+            {
+                "step": 2,
+                "thought": "Interface is clear: MemoryRetriever(memory) with retrieve_recent(). Now read long_term_memory.py to find the right insertion point.",
+                "action": {
+                    "mode": "coder",
+                    "action_type": "read_file_range",
+                    "reason": "Read long_term_memory.py to find insertion point for MemoryRetriever class",
+                    "parameters": {"path": "igris/core/long_term_memory.py", "start": 1, "end": 50},
+                    "expected_effect": "Locate end of LongTermMemory class to append MemoryRetriever after it",
+                    "risk_hint": "low",
+                    "confidence": 0.9,
+                    "required_preconditions": [],
+                    "success_check": {"has_content": True},
+                    "fallback_if_blocked": None,
+                },
+                "observed_result": "File loaded — LongTermMemory class ends at line 298, file ends at line 300",
+            },
+            {
+                "step": 3,
+                "thought": "I have the interface and the insertion point. Append MemoryRetriever class after LongTermMemory.",
+                "action": {
+                    "mode": "coder",
+                    "action_type": "append_file",
+                    "reason": "Add MemoryRetriever class that tests expect to find in this module",
+                    "parameters": {
+                        "path": "igris/core/long_term_memory.py",
+                        "content": "\n\nclass MemoryRetriever:\n    def __init__(self, memory):\n        self._memory = memory\n\n    def retrieve_recent(self, domain, limit=10):\n        return self._memory.get_entries(domain, limit=limit)\n\n    def retrieve_contextual(self, domain, query='', limit=10):\n        if query:\n            return self._memory.search(query, domains=[domain], limit=limit)\n        return self._memory.get_entries(domain, limit=limit)\n",
+                    },
+                    "expected_effect": "MemoryRetriever class appended to long_term_memory.py",
+                    "risk_hint": "low",
+                    "confidence": 0.95,
+                    "required_preconditions": ["read: igris/core/long_term_memory.py"],
+                    "success_check": {"file_modified": "igris/core/long_term_memory.py"},
+                    "fallback_if_blocked": "insert_after",
+                },
+                "observed_result": "append_file succeeded",
+            },
+            {
+                "step": 4,
+                "thought": "Class added. Run tests to confirm collection error is resolved and tests pass.",
+                "action": {
+                    "mode": "tester",
+                    "action_type": "run_tests",
+                    "reason": "Verify ImportError is resolved and all related tests pass",
+                    "parameters": {"target": "tests/test_long_term_memory.py", "args": "-v"},
+                    "expected_effect": "All tests in test_long_term_memory.py pass",
+                    "risk_hint": "low",
+                    "confidence": 0.9,
+                    "required_preconditions": ["code_written: igris/core/long_term_memory.py"],
+                    "success_check": {"exit_code": 0},
+                    "fallback_if_blocked": None,
+                },
+                "observed_result": "10 passed — ImportError resolved, all tests pass",
+            },
+        ],
+    },
+    {
+        "scenario": "Replace a buggy function (4-step chain)",
+        "goal": "Fix rate limiter that crashes on OPTIONS requests",
+        "chain": [
+            {
+                "step": 1,
+                "thought": "I need to find the rate limiter code. Search for the rate limiting logic in the security module.",
+                "action": {
+                    "mode": "coder",
+                    "action_type": "search_code",
+                    "reason": "Find rate limiter implementation to understand the crash location",
+                    "parameters": {"pattern": "is_destructive", "path": "igris/"},
+                    "expected_effect": "Find the line that incorrectly classifies OPTIONS requests",
+                    "risk_hint": "low",
+                    "confidence": 0.9,
+                    "required_preconditions": [],
+                    "success_check": {"has_results": True},
+                    "fallback_if_blocked": "find_files",
+                },
+                "observed_result": "igris/web/security.py:45: is_destructive = path.startswith(p) (missing method check)",
+            },
+            {
+                "step": 2,
+                "thought": "Found it at security.py:45. Read lines 40-55 to see the full logic before replacing.",
+                "action": {
+                    "mode": "coder",
+                    "action_type": "read_file_range",
+                    "reason": "Read the buggy is_destructive block to write an exact replacement",
+                    "parameters": {"path": "igris/web/security.py", "start": 40, "end": 55},
+                    "expected_effect": "See exact lines to replace",
+                    "risk_hint": "low",
+                    "confidence": 0.9,
+                    "required_preconditions": [],
+                    "success_check": {"has_content": True},
+                    "fallback_if_blocked": None,
+                },
+                "observed_result": "Lines 40-55 loaded — is_destructive missing method filter at line 43",
+            },
+            {
+                "step": 3,
+                "thought": "I know exactly what to fix: add `and _method not in ('GET','HEAD','OPTIONS')`. Use replace_range for surgical fix.",
+                "action": {
+                    "mode": "coder",
+                    "action_type": "replace_range",
+                    "reason": "Fix is_destructive to exclude safe HTTP methods, preventing OPTIONS crash",
+                    "parameters": {
+                        "path": "igris/web/security.py",
+                        "start": 43,
+                        "end": 44,
+                        "content": "    is_destructive = (\n        any(path.startswith(p) for p in _DESTRUCTIVE_PATH_PREFIXES)\n        and _method not in (\"GET\", \"HEAD\", \"OPTIONS\")\n    )\n",
+                    },
+                    "expected_effect": "OPTIONS requests no longer classified as destructive",
+                    "risk_hint": "medium",
+                    "confidence": 0.9,
+                    "required_preconditions": ["read: igris/web/security.py lines 40-55"],
+                    "success_check": {"file_modified": "igris/web/security.py"},
+                    "fallback_if_blocked": "propose_patch",
+                },
+                "observed_result": "replace_range succeeded",
+            },
+            {
+                "step": 4,
+                "thought": "Fix applied. Run the security tests to confirm.",
+                "action": {
+                    "mode": "tester",
+                    "action_type": "run_tests",
+                    "reason": "Verify rate limiter fix does not break existing security tests",
+                    "parameters": {"target": "tests/test_security.py", "args": "-v"},
+                    "expected_effect": "All security tests pass",
+                    "risk_hint": "low",
+                    "confidence": 0.85,
+                    "required_preconditions": ["code_written: igris/web/security.py"],
+                    "success_check": {"exit_code": 0},
+                    "fallback_if_blocked": None,
+                },
+                "observed_result": "All tests pass — rate limiter fix confirmed",
+            },
+        ],
+    },
+]
+
+
 def get_example_scenarios() -> List[Dict[str, Any]]:
     """Return all example scenarios for documentation and testing."""
     return EXAMPLE_SCENARIOS
+
+
+def get_cot_examples() -> List[Dict[str, Any]]:
+    """Return chain-of-thought multi-step examples (#1043)."""
+    return CHAIN_OF_THOUGHT_EXAMPLES

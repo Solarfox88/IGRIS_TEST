@@ -827,6 +827,105 @@ class AgentReasoningLoop:
             memory_items=self._memory_items,
         )
 
+    # Token budget thresholds for local profiles (#1044)
+    _LOCAL_TOKEN_WARN = 3000    # ~12 000 chars — warn and log
+    _LOCAL_TOKEN_CAP  = 3800    # ~15 200 chars — hard truncate before sending
+    _LOCAL_PROFILES   = {"local_light", "local_coder", "mini_execution"}
+
+    def _guard_context_window(
+        self,
+        system_prompt: str,
+        user_message: str,
+        context_packet: Any,
+    ) -> tuple:
+        """Truncate system_prompt/user_message when near local model token cap (#1044 fix).
+
+        Truncation strategy (priority order — least critical cut first):
+          1. Cut from the END of system_prompt (file_context + CoT examples are last).
+          2. Never cut role/rules/mission/state sections (they're in the front).
+
+        The prompt template order is:
+          [role + action schema + rules] → [mission] → [state] → [recent_actions] → [file_context] → [examples]
+
+        Cutting from the end preserves the critical sections and only removes file/example
+        context — which is the correct tradeoff when the token budget is tight.
+
+        Returns the (possibly truncated) system_prompt, user_message pair.
+        Emits a warning to _world_state when truncation occurs.
+        """
+        profile = self.preferred_profile or ""
+        if profile not in self._LOCAL_PROFILES:
+            return system_prompt, user_message
+
+        # Estimate token count (~4 chars per token)
+        total_chars = len(system_prompt) + len(user_message)
+        token_estimate = total_chars // 4
+
+        if token_estimate <= self._LOCAL_TOKEN_WARN:
+            return system_prompt, user_message
+
+        # Log warning
+        self._world_state["context_window_warning"] = (
+            f"token_estimate={token_estimate} > warn_threshold={self._LOCAL_TOKEN_WARN} "
+            f"(profile={profile})"
+        )
+
+        if token_estimate <= self._LOCAL_TOKEN_CAP:
+            return system_prompt, user_message
+
+        # Hard cap exceeded — cut from the END (file_context and examples are last).
+        # This preserves: role, action schema, rules 1-14, mission, state (MISSION INTAKE).
+        target_chars = self._LOCAL_TOKEN_CAP * 4
+        budget_system = target_chars - len(user_message) - 200  # 200 chars safety margin
+        if budget_system > 500 and len(system_prompt) > budget_system:
+            system_prompt = (
+                system_prompt[:budget_system]
+                + "\n... [file context truncated for token budget] ...\n"
+            )
+            self._world_state["context_window_truncated"] = True
+
+        return system_prompt, user_message
+
+    def _build_cot_examples_text(self) -> str:
+        """Build CoT step-by-step examples for injection into system prompt (#1043 fix).
+
+        Local profiles (phi4-mini): 1 example, first 3 steps (token budget ~1200 chars).
+        Cloud profiles: all 3 examples, full chains.
+
+        Returns an empty string on any error (never blocks the run).
+        """
+        try:
+            from igris.core.prompt_contract import get_cot_examples
+            examples = get_cot_examples()
+            if not examples:
+                return ""
+
+            profile = self.preferred_profile or ""
+            is_local = profile in self._LOCAL_PROFILES
+            max_examples = 1 if is_local else len(examples)
+            max_steps = 3 if is_local else 999
+
+            lines: List[str] = ["## Step-by-Step Examples\n"]
+            for ex in examples[:max_examples]:
+                lines.append(f"### Example: {ex.get('scenario', '')}")
+                lines.append(f"Goal: {ex.get('goal', '')}\n")
+                for step in ex.get("chain", [])[:max_steps]:
+                    n = step.get("step", "?")
+                    thought = (step.get("thought", "") or "")[:200]
+                    action = step.get("action", {}) or {}
+                    a_type = action.get("action_type", "?")
+                    a_path = (action.get("parameters", {}) or {}).get("path", "")
+                    result = (step.get("observed_result", "") or "")[:120]
+                    lines.append(f"Step {n} — Thought: {thought}")
+                    lines.append(
+                        f"  → Action: {a_type}"
+                        + (f" '{a_path}'" if a_path else "")
+                    )
+                    lines.append(f"  → Result: {result}\n")
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
     def _decide_action(self, context_packet):
         """Decide next action via Model Orchestrator.
 
@@ -840,8 +939,15 @@ class AgentReasoningLoop:
 
         # Build prompt from context
         system_prompt = self._format_system_prompt(context_packet)
+        user_message = self._format_user_message(context_packet)
+
+        # Guard against silent truncation on local models (#1044)
+        system_prompt, user_message = self._guard_context_window(
+            system_prompt, user_message, context_packet
+        )
+
         messages = [
-            {"role": "user", "content": self._format_user_message(context_packet)},
+            {"role": "user", "content": user_message},
         ]
 
         orch_result = orch.complete(
@@ -886,6 +992,7 @@ class AgentReasoningLoop:
             state_context=context_packet.state_context,
             recent_actions=context_packet.recent_actions,
             file_context=context_packet.file_context,
+            examples_context=self._build_cot_examples_text(),
         )
 
     def _format_user_message(self, context_packet) -> str:

@@ -400,14 +400,108 @@ class ContextManager:
         return "\n".join(parts) if parts else "No active mission."
 
     def _build_state_context(self, world_state: Dict[str, Any]) -> str:
-        """Build world state context string."""
+        """Build world state context string with operative directives (#1041).
+
+        High-signal keys (discovered_files, search_matched_files, MBOP intake,
+        anti_repeat) are rendered as explicit instructions. Remaining keys are
+        condensed to avoid token overflow on local profiles (cap: 2500 chars).
+        """
         if not world_state:
             return "No state information available."
 
-        lines = []
+        sections: List[str] = []
+
+        # --- MBOP intake block (highest priority — tells the model WHAT and WHERE) ---
+        mbop_parts: List[str] = []
+        mbop_what = str(world_state.get("mbop_what", "") or "").strip()
+        mbop_where = str(world_state.get("mbop_where", "") or "").strip()
+        mbop_why = str(world_state.get("mbop_why", "") or "").strip()
+        mbop_acs = world_state.get("mbop_acceptance_criteria") or []
+        if mbop_what:
+            mbop_parts.append(f"  WHAT: {mbop_what[:200]}")
+        if mbop_where:
+            mbop_parts.append(f"  WHERE (target file/module): {mbop_where[:200]}")
+        if mbop_why:
+            mbop_parts.append(f"  WHY: {mbop_why[:200]}")
+        if mbop_acs:
+            ac_str = "; ".join(str(a)[:100] for a in mbop_acs[:5])
+            mbop_parts.append(f"  ACCEPTANCE CRITERIA: {ac_str}")
+        if mbop_parts:
+            sections.append("## MISSION INTAKE\n" + "\n".join(mbop_parts))
+
+        # --- Anti-repeat warning ---
+        if world_state.get("anti_repeat_triggered"):
+            diag = str(world_state.get("anti_repeat_diagnosis", "") or "")[:200]
+            sections.append(
+                f"⚠ ANTI-REPEAT GUARD TRIGGERED: {diag}\n"
+                "→ Do NOT repeat the same find/search. Read or modify the files you found."
+            )
+
+        # --- Discovered files directive ---
+        discovered = world_state.get("discovered_files")
+        if discovered:
+            files_str = ", ".join(str(f) for f in (discovered[:10] if isinstance(discovered, list) else [str(discovered)]))
+            sections.append(
+                f"DISCOVERED FILES (→ read or modify these next, do NOT search again):\n  {files_str}"
+            )
+
+        # --- Search matches directive ---
+        search_matches = world_state.get("search_matched_files")
+        if search_matches and isinstance(search_matches, list) and search_matches:
+            matches_str = ", ".join(str(f) for f in search_matches[:10])
+            sections.append(
+                f"SEARCH MATCHES (→ read these files, do NOT search again):\n  {matches_str}"
+            )
+
+        # --- Last tool result summary ---
+        last_tool = world_state.get("last_tool_result")
+        if last_tool and isinstance(last_tool, dict):
+            action_type = last_tool.get("action_type", "")
+            data = last_tool.get("data")
+            if action_type and data is not None:
+                data_preview = str(data)[:150]
+                sections.append(
+                    f"LAST TOOL RESULT ({action_type}): {data_preview}\n"
+                    "→ Use this result. Do NOT repeat the same action."
+                )
+
+        # --- Condensed remaining state (skip MBOP and directive keys already shown) ---
+        _skip_keys = {
+            "discovered_files", "search_matched_files", "last_tool_result",
+            "anti_repeat_triggered", "anti_repeat_diagnosis", "anti_repeat_retryable",
+            "mbop_what", "mbop_where", "mbop_why", "mbop_acceptance_criteria",
+        }
+        # Also skip tool_result_history when at budget risk (keep max 2 recent)
+        _tool_history = world_state.get("tool_result_history")
+        compact_lines: List[str] = []
         for k, v in world_state.items():
-            lines.append(f"{k}: {v}")
-        return "\n".join(lines)
+            if k in _skip_keys or k == "tool_result_history":
+                continue
+            val_str = str(v)[:120]
+            compact_lines.append(f"{k}: {val_str}")
+
+        # Add abbreviated tool history (2 entries max to save tokens)
+        if _tool_history and isinstance(_tool_history, list) and len(_tool_history) > 0:
+            recent = _tool_history[-2:]
+            hist_parts = []
+            for entry in recent:
+                if isinstance(entry, dict):
+                    at = entry.get("action_type", "?")
+                    d = str(entry.get("data", ""))[:60]
+                    hist_parts.append(f"{at}:{d}")
+            if hist_parts:
+                compact_lines.append(f"tool_result_history (last 2): {' | '.join(hist_parts)}")
+
+        if compact_lines:
+            sections.append("STATE:\n" + "\n".join(compact_lines))
+
+        result = "\n\n".join(sections) if sections else "No state information available."
+
+        # Hard cap for local profiles: 2500 chars
+        if len(result) > 2500:
+            result = result[:2480] + "\n... [state truncated]"
+
+        return result
 
     def _build_memory_context(self, memory_items: List[Dict[str, Any]]) -> str:
         """Build memory context from retrieved items."""
