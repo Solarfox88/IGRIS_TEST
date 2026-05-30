@@ -85,6 +85,32 @@ _REPAIR_ISSUE_PATTERNS = ("supervised repair for", "supervised repair:", "repair
 # Persisted skip list path — survives server restarts so IGRIS won't retry
 # a ceiling issue every time the service restarts after another run.
 _WATCHDOG_SKIPPED_PATH = ".igris/watchdog_skipped_issues.json"
+# Persisted per-issue capability signals — survives server restarts so the
+# assignment router can escalate to hard_debugging after repeated failures
+# even when the service is restarted between watchdog cycles.
+_WATCHDOG_SIGNALS_PATH = ".igris/watchdog_issue_signals.json"
+
+
+def _load_issue_signals(project_root: str) -> Dict[int, Dict]:
+    """Load persisted per-issue capability signals from disk."""
+    path = os.path.join(project_root, _WATCHDOG_SIGNALS_PATH)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return {int(k): dict(v) for k, v in data.items()}
+    except (OSError, json.JSONDecodeError, ValueError, KeyError):
+        return {}
+
+
+def _save_issue_signals(project_root: str, signals: Dict[int, Dict]) -> None:
+    """Persist per-issue capability signals to disk."""
+    path = os.path.join(project_root, _WATCHDOG_SIGNALS_PATH)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump({str(k): dict(v) for k, v in signals.items()}, f)
+    except OSError as exc:
+        _watchdog_logger.warning("Watchdog: failed to persist issue signals: %s", exc)
 
 
 def _load_skipped_issues(project_root: str) -> set:
@@ -209,12 +235,18 @@ async def _watchdog_loop(project_root: str) -> None:
     # Passed as prior_capability_signals to the next run so the assignment
     # router can escalate to hard_debugging (→ gpu_reasoning → VastAI) after
     # repeated failures with accumulated no_diff_repair / reasoning_timeout.
-    _issue_last_signals: Dict[int, Dict] = {}
+    # Loaded from disk so escalation accumulates correctly across service restarts.
+    _issue_last_signals: Dict[int, Dict] = _load_issue_signals(project_root)
     _skipped_issues: set = _load_skipped_issues(project_root)
     if _skipped_issues:
         _watchdog_logger.info(
             "Watchdog: loaded %d persisted skipped issues: %s",
             len(_skipped_issues), sorted(_skipped_issues),
+        )
+    if _issue_last_signals:
+        _watchdog_logger.info(
+            "Watchdog: loaded persisted capability signals for %d issue(s): %s",
+            len(_issue_last_signals), dict(_issue_last_signals),
         )
     _last_run_id: Optional[str] = None
     _last_issue_num: Optional[int] = None
@@ -320,6 +352,8 @@ async def _watchdog_loop(project_root: str) -> None:
                                 for _s, _c in _last_sigs.items():
                                     merged[_s] = merged.get(_s, 0) + _c
                                 _issue_last_signals[_last_issue_num] = merged
+                                # Persist to disk so signals survive service restarts.
+                                _save_issue_signals(project_root, _issue_last_signals)
                             _watchdog_logger.info(
                                 "Watchdog: issue #%d failed (consecutive=%d, failure_class=%s, signals=%s)",
                                 _last_issue_num, count,
@@ -338,6 +372,7 @@ async def _watchdog_loop(project_root: str) -> None:
                         elif last_run.status == "done":
                             _issue_failures.pop(_last_issue_num, None)
                             _issue_last_signals.pop(_last_issue_num, None)
+                            _save_issue_signals(project_root, _issue_last_signals)
                     _last_run_id = None
                     _last_issue_num = None
 

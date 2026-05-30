@@ -141,8 +141,18 @@ _FEAT_IMPL_PATTERNS = (
     "feat(layers)",
 )
 _MEMORY_KEYWORDS = frozenset([
-    "memory", "synapse", "recall", "vector store", "embedding",
+    "synapse", "recall", "vector store", "embedding",
     "knowledge base", "long-term",
+])
+# "memory" is too ambiguous for full-body substring matching.
+# Italian/English issue bodies mention "memory" metaphorically:
+#   "dato raw GitHub esposto come trusted memory senza validazione"
+#   (= "raw GitHub data exposed as trusted memory without validation")
+# Only match "memory" if it appears in the issue TITLE (first line).
+_MEMORY_TITLE_KEYWORDS = frozenset([
+    "memory",
+    "long_term_memory",
+    "long-term memory",
 ])
 _SECURITY_KEYWORDS = frozenset([
     "api key", "credential", "jwt",
@@ -205,6 +215,21 @@ def _contains_test_signal(text: str) -> bool:
     return _contains_any(t, _TEST_KEYWORDS - {"test"})
 
 
+def _goal_title(goal_text: str) -> str:
+    """Return the first non-empty line of the goal (the issue title / feat-line).
+
+    This is used for routing decisions where the full issue body may contain
+    domain terms that don't reflect the task type. For example, an issue about
+    implementing a GitHub gateway mentions 'memory' and 'secret' as security
+    constraints, not as the task domain.
+    """
+    for line in goal_text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped.lower()
+    return goal_text[:200].lower()
+
+
 def _classify_goal(request: AssignmentRequest) -> Tuple[str, str, List[str]]:
     """Return (agent_role, task_type, reasons)."""
     goal = request.goal_text
@@ -212,6 +237,7 @@ def _classify_goal(request: AssignmentRequest) -> Tuple[str, str, List[str]]:
     signals = request.capability_signals
     labels = [la.lower() for la in request.issue_labels]
     reasons: List[str] = []
+    _title = _goal_title(goal)  # first line only — used for ambiguous routing
 
     # Escalation override: accumulated no_diff_repair / combined signals → hard_debugging.
     # Must run before keyword classification so "fix …" text doesn't fall to documentation.
@@ -244,7 +270,13 @@ def _classify_goal(request: AssignmentRequest) -> Tuple[str, str, List[str]]:
     # NOT on risk_level alone. risk_level=high means "historically hard task",
     # not "security task". Routing a feature implementation to security_reviewer
     # because it failed 23 times causes no_diff_repair (reviewer never writes code).
-    if _contains_security(goal) or "security" in labels:
+    # Use _title for bare substring keywords (avoids matching constraints in body);
+    # keep full-body match for explicit security phrases (sql injection etc.)
+    if (
+        _contains_security(_title)
+        or _contains_any(goal, _SECURITY_KEYWORDS_WHOLE_WORD)
+        or "security" in labels
+    ):
         reasons.append("security keywords in goal")
         return "security_reviewer", "security_review", reasons
 
@@ -252,8 +284,13 @@ def _classify_goal(request: AssignmentRequest) -> Tuple[str, str, List[str]]:
         reasons.append("devops keywords")
         return "devops", "devops_runtime", reasons
 
-    # Memory system
-    if _contains_any(goal, _MEMORY_KEYWORDS) or "memory" in labels:
+    # Memory system — use _title for bare "memory" (too common in issue bodies),
+    # full body for unambiguous memory-specific terms (synapse, vector store, etc.)
+    if (
+        _contains_any(_title, _MEMORY_TITLE_KEYWORDS)
+        or _contains_any(goal, _MEMORY_KEYWORDS)
+        or "memory" in labels
+    ):
         reasons.append("memory system keywords")
         return "memory_architect", "memory_system", reasons
 
