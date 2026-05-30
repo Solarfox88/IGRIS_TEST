@@ -415,7 +415,10 @@ async def _watchdog_loop(project_root: str) -> None:
                     clean_res = await asyncio.get_event_loop().run_in_executor(
                         None,
                         lambda: __import__("subprocess").run(
-                            ["git", "clean", "-fd", "--", "igris", "tests", "docs", "."],
+                            # Use -e (exclude) NOT -- (path) for igris/ and tests/.
+                            # -- would CLEAN those dirs (deleting IGRIS's implementation files).
+                            # -e preserves untracked files there across service restarts.
+                            ["git", "clean", "-fd", "-e", "igris", "-e", "tests", "."],
                             capture_output=True, text=True, cwd=project_root,
                         )
                     )

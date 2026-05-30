@@ -327,13 +327,37 @@ class AgentReasoningLoop:
             else:
                 self._steps_without_write += 1
             # Inject a visible warning after too many consecutive read-only steps (#1069).
-            # The warning appears in the STATE section of the next LLM prompt.
+            # The warning appears in the STATE section AND _recent_errors of the next LLM prompt.
+            # _recent_errors has much higher prompt visibility than world_state keys.
             _READ_LOOP_WARN_THRESHOLD = 8
+            _READ_LOOP_ESCALATE_THRESHOLD = 15
             if self._steps_without_write >= _READ_LOOP_WARN_THRESHOLD:
-                self._world_state["READ_LOOP_WARNING"] = (
-                    f"⚠️ {self._steps_without_write} read-only steps — "
-                    f"WRITE or COMMIT NOW. Create missing deps if needed."
+                _loop_msg = (
+                    f"⚠️ READ LOOP: {self._steps_without_write} consecutive read-only steps. "
+                    f"STOP READING. WRITE or COMMIT a file NOW. "
+                    f"If a dependency is missing, CREATE it. "
+                    f"If you have implementation files, stage and commit them immediately."
                 )
+                self._world_state["READ_LOOP_WARNING"] = _loop_msg
+                # Escalate to _recent_errors for higher prompt visibility after threshold
+                if self._steps_without_write >= _READ_LOOP_ESCALATE_THRESHOLD:
+                    _loop_err = {
+                        "step": step_num,
+                        "error": _loop_msg,
+                        "action_type": step.action_type,
+                    }
+                    # Replace any previous loop error rather than appending indefinitely
+                    self._recent_errors = [
+                        e for e in self._recent_errors
+                        if "READ LOOP" not in str(e.get("error", ""))
+                    ]
+                    self._recent_errors.append(_loop_err)
+            elif "READ_LOOP_WARNING" in self._world_state:
+                # Warning was already cleared from world_state above, but clean errors too
+                self._recent_errors = [
+                    e for e in self._recent_errors
+                    if "READ LOOP" not in str(e.get("error", ""))
+                ]
             self._steps.append(step)
             if step_callback is not None:
                 try:
