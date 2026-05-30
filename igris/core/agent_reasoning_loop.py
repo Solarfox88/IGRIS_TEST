@@ -1380,6 +1380,49 @@ class AgentReasoningLoop:
                     "error": tr.error,
                 }
 
+            elif action.action_type == "git_commit":
+                # Stage provided files (git add) then commit.
+                # Without this handler the model receives
+                # "Tool runtime action not yet integrated" and never commits.
+                files = action.parameters.get("files") or []
+                message = (
+                    action.parameters.get("message")
+                    or action.parameters.get("commit_message")
+                    or "feat: reasoning loop implementation"
+                )
+                tr = rt.git_commit(message=message, files=files if files else None)
+                return {
+                    "success": tr.success,
+                    "summary": tr.output[:400] if tr.output else "No output",
+                    "error": tr.error,
+                    "result_data": tr.output,
+                }
+
+            elif action.action_type == "git_add":
+                files = (
+                    action.parameters.get("files")
+                    or action.parameters.get("paths")
+                    or []
+                )
+                if not files:
+                    path = (
+                        action.parameters.get("path")
+                        or action.parameters.get("file")
+                        or "."
+                    )
+                    files = [path]
+                results = []
+                for f in files:
+                    tr = rt._run_subprocess(["git", "add", f], timeout=10)
+                    results.append(
+                        f"{f}: {'ok' if tr.returncode == 0 else tr.stderr[:80]}"
+                    )
+                return {
+                    "success": all("ok" in r for r in results),
+                    "summary": "; ".join(results),
+                    "error": None,
+                }
+
             elif action.action_type == "raw_shell_proposal":
                 return {
                     "success": False,
