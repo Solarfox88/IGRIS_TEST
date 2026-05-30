@@ -323,8 +323,17 @@ class AgentReasoningLoop:
             step = self._execute_step(step_num, goal, mission_id)
             if len(self._files_modified) > _files_before or step.action_type in WRITE_ACTIONS:
                 self._steps_without_write = 0
+                self._world_state.pop("READ_LOOP_WARNING", None)
             else:
                 self._steps_without_write += 1
+            # Inject a visible warning after too many consecutive read-only steps (#1069).
+            # The warning appears in the STATE section of the next LLM prompt.
+            _READ_LOOP_WARN_THRESHOLD = 8
+            if self._steps_without_write >= _READ_LOOP_WARN_THRESHOLD:
+                self._world_state["READ_LOOP_WARNING"] = (
+                    f"⚠️ {self._steps_without_write} read-only steps — "
+                    f"WRITE or COMMIT NOW. Create missing deps if needed."
+                )
             self._steps.append(step)
             if step_callback is not None:
                 try:
