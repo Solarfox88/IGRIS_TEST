@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+from unittest.mock import patch
 
 import pytest
 
@@ -55,8 +56,16 @@ class TestExecuteStep:
         assert "saturated" in result.reason.lower() or "avoid" in result.reason.lower()
 
     def test_execute_test_command(self, engine: TaskEngine, project_dir: str) -> None:
+        """Ensure execute_step dispatches 'test' family to execute_command/run_tests.
+        run_safe_command is mocked so no real subprocess is spawned (prevents flakiness).
+        """
         engine.create_task("run unit tests", family="test")
-        result = execute_step(engine, step_number=1, project_root=project_dir)
+        _mock_cmd_result = {"returncode": 0, "stdout": "1 passed", "stderr": ""}
+        with patch(
+            "igris.layers.execution.runner.run_safe_command",
+            return_value=_mock_cmd_result,
+        ):
+            result = execute_step(engine, step_number=1, project_root=project_dir)
         assert result.action_type == "execute_command"
         assert "run_tests" in result.action_detail
 

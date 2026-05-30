@@ -163,6 +163,7 @@ class LoopResult:
     mission_brain_shadow_error: str = ""
     mission_brain_shadow_record: Optional[Dict[str, Any]] = None
     mission_brain_wrapper_policy: Optional[Dict[str, Any]] = None
+    estimated_cost_usd: float = 0.0  # accumulated model call cost for this run
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -195,6 +196,8 @@ class LoopResult:
             "mission_brain_shadow_error": redact_secrets(self.mission_brain_shadow_error),
             "mission_brain_shadow_record": self.mission_brain_shadow_record,
             "mission_brain_wrapper_policy": self.mission_brain_wrapper_policy,
+            "estimated_cost": self.estimated_cost_usd,
+            "estimated_cost_usd": self.estimated_cost_usd,
         }
 
 
@@ -230,7 +233,13 @@ class AgentReasoningLoop:
         self.project_root = project_root or os.environ.get("PROJECT_ROOT", ".")
         self.max_steps = max_steps
         self.max_consecutive_errors = max_consecutive_errors
-        self.no_diff_steps_max = no_diff_steps_max
+        # Honour IGRIS_NO_DIFF_STEPS_MAX env var (matches .env default of 50).
+        # Falls back to constructor arg (default 20) if env var is absent/invalid.
+        try:
+            _env_no_diff = os.environ.get("IGRIS_NO_DIFF_STEPS_MAX")
+            self.no_diff_steps_max = int(_env_no_diff) if _env_no_diff else no_diff_steps_max
+        except (TypeError, ValueError):
+            self.no_diff_steps_max = no_diff_steps_max
         self.role = role
         self.task_type = task_type
         self.preferred_profile = preferred_profile
@@ -254,6 +263,7 @@ class AgentReasoningLoop:
         self._reasoning_model: str = ""
         self._reasoning_profile: str = ""
         self._orchestrator_used: bool = False
+        self._total_cost_usd: float = 0.0  # accumulated model call cost
 
         # Anti-repeat guard: tracks (action_type, params_key) -> count
         self._action_history: List[Dict[str, Any]] = []
@@ -356,6 +366,7 @@ class AgentReasoningLoop:
         result.reasoning_execution_profile = self._reasoning_profile
         result.orchestrator_used = self._orchestrator_used
         result.local_model_available = self._local_model_available()
+        result.estimated_cost_usd = self._total_cost_usd
         self._run_mission_brain_shadow(goal=goal, result=result)
 
         return result
@@ -958,6 +969,12 @@ class AgentReasoningLoop:
             preferred_profile=self.preferred_profile,
             timeout=120.0,
         )
+
+        # Accumulate cost for execution budget tracking
+        try:
+            self._total_cost_usd += float(getattr(orch_result, "estimated_cost", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            pass
 
         # Record orchestrator observability on first successful call
         if orch_result.success and not self._orchestrator_used:

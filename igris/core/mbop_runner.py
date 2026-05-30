@@ -155,6 +155,21 @@ def _extract_acceptance_criteria(body: str) -> List[str]:
 _STUB_PATTERNS = [
     "# placeholder", "# todo", "# fixme", "# hack",
     "raise notimplementederror", "pass  # stub", "... # stub",
+    # Brittle test patterns — tests that pass trivially without real verification
+    "assert true",          # assert True always passes
+    "assert false",         # assert False always fails; stub placeholder
+    "assert 1 == 1",        # tautology
+    "assert none is none",  # tautology
+    "return none  # stub",
+    "return {}  # stub",
+    "return []  # stub",
+]
+# Regex-based brittle patterns applied per-line in test files
+_STUB_REGEX_PATTERNS = [
+    re.compile(r"assert\s+\w.*==\s*200\b"),     # assert x == 200 (status code stub)
+    re.compile(r"assert\s+response\.ok\b"),      # assert response.ok without any context check
+    re.compile(r"assert\s+True\b"),              # assert True (always passes)
+    re.compile(r"assert\s+\d+\s*==\s*\d+\b"),   # assert literal == literal (tautology)
 ]
 _MAX_PYTEST_SECONDS = 120
 
@@ -175,10 +190,17 @@ def mbop_phase9_quality_gate(
         if not full.exists() or not rel_path.endswith(".py"):
             continue
         try:
-            content = full.read_text(encoding="utf-8", errors="replace").lower()
+            content = full.read_text(encoding="utf-8", errors="replace")
+            content_lower = content.lower()
             for pat in _STUB_PATTERNS:
-                if pat in content:
+                if pat in content_lower:
                     stub_found.append(f"{rel_path}:{pat}")
+            # Regex patterns on test files only (avoid false positives in production code)
+            if "test" in rel_path.lower():
+                for line_no, line in enumerate(content.splitlines(), 1):
+                    for rpat in _STUB_REGEX_PATTERNS:
+                        if rpat.search(line):
+                            stub_found.append(f"{rel_path}:{line_no}:{rpat.pattern}")
         except OSError:
             pass
     result.stub_patterns_found = stub_found

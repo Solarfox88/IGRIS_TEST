@@ -187,9 +187,11 @@ MODEL_PROFILES = (
 
 # Task type → recommended profile mapping
 TASK_PROFILE_MAP: Dict[str, str] = {
-    "chat": "local_light",
-    "classification": "local_light",
-    "synthesis": "local_light",
+    # chat/classification/synthesis: cloud-first to avoid phi4-mini quality issues on complex tasks.
+    # local_light (ollama) remains the final fallback via the cheap_cloud_reasoning chain.
+    "chat": "cheap_cloud_reasoning",
+    "classification": "cheap_cloud_reasoning",
+    "synthesis": "cheap_cloud_reasoning",
     "code_reasoning": "cheap_cloud_reasoning",
     "code_generation": "cheap_cloud_reasoning",
     "patch_generation": "cheap_cloud_reasoning",
