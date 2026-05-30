@@ -145,17 +145,23 @@ _MEMORY_KEYWORDS = frozenset([
     "knowledge base", "long-term",
 ])
 _SECURITY_KEYWORDS = frozenset([
-    "secret", "api key", "credential", "jwt",
+    "api key", "credential", "jwt",
     "vulnerability", "xss", "csrf",
 ])
 # Whole-word / phrase matches for ambiguous terms:
 # - "auth"      would match "Authorization" in non-security titles
 # - "injection" would match Italian "dell'injection nel contesto" (LLM context)
 # - "token"     would match "token budget", "token count"
+# - "secret"    appears in Italian/English issue bodies as a constraint, not as
+#               the task domain (e.g. "Nessuna lettura di secret" = "No secret reading").
+#               Use word-boundary matching so it matches security task titles but
+#               not incidental mentions in requirement bodies.
 _SECURITY_KEYWORDS_WHOLE_WORD = frozenset([
     "auth token", "auth key", "api token", "access token",
     "sql injection", "command injection", "prompt injection attack",
     "permission denied", "privilege escalation",
+    "secret management", "secrets management", "manage secrets",
+    "handle secrets", "protect secrets", "store secrets",
 ])
 _DEVOPS_KEYWORDS = frozenset([
     "deploy", "restart", "ci ", "cd ", "docker", "kubernetes", "smoke",
