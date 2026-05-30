@@ -166,7 +166,13 @@ _EPIC_KEYWORDS = frozenset([
     "epic", "system-wide", "overhaul",
     "parallelism", "parallel agents", "multi-agent", "concurrent tasks",
     "voice layer", "tts", "speech synthesis",
-    "interlocutor", "authorization model",
+    "authorization model",
+])
+# "interlocutor" must be whole-word: Italian "interlocutore" (= the user talking to IGRIS)
+# contains it as a substring → false-positive routes gateway tasks to planner.
+_EPIC_KEYWORDS_WHOLE_WORD = frozenset([
+    "interlocutor",       # avoid matching "interlocutore" (Italian)
+    "interlocutor layer", # explicit system component reference
 ])
 _REPAIR_KEYWORDS = frozenset([
     "fix", "repair", "debug", "diagnose", "broken", "failing", "error",
@@ -245,8 +251,15 @@ def _classify_goal(request: AssignmentRequest) -> Tuple[str, str, List[str]]:
         reasons.append("memory system keywords")
         return "memory_architect", "memory_system", reasons
 
-    # Large epic / architecture — triggered by keywords+length OR keywords+epic label
-    if _contains_any(goal, _EPIC_KEYWORDS) and (len(goal) > 200 or "epic" in labels):
+    # Large epic / architecture — triggered by keywords+length OR keywords+epic label.
+    # Whole-word epic keywords (e.g. "interlocutor") are checked separately to avoid
+    # Italian/Spanish substring false-positives (e.g. "interlocutore" ⊃ "interlocutor").
+    def _contains_epic(g: str) -> bool:
+        return _contains_any(g, _EPIC_KEYWORDS) or any(
+            f" {kw} " in f" {g.lower()} " or g.lower().startswith(kw + " ") or g.lower().endswith(" " + kw)
+            for kw in _EPIC_KEYWORDS_WHOLE_WORD
+        )
+    if _contains_epic(goal) and (len(goal) > 200 or "epic" in labels):
         reasons.append("large epic keywords + (long goal or epic label)")
         return "planner", "planning", reasons
 
