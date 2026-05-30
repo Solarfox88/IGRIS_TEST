@@ -80,58 +80,41 @@ class MBOPEvalResult:
 # ---------------------------------------------------------------------------
 
 def mbop_phase1_intake(issue_number: int, project_root: str) -> MBOPIntakeResult:
-    """Read GitHub issue and extract structured MBOP intake.
-
-    Uses gh CLI. Best-effort: returns empty result on any error.
-    """
+    """Read GitHub issue and extract structured MBOP intake."""
     result = MBOPIntakeResult(issue_number=issue_number)
     if not issue_number:
         return result
-
     try:
         proc = subprocess.run(
             ["gh", "issue", "view", str(issue_number), "--json", "title,body,labels"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            cwd=project_root,
+            capture_output=True, text=True, timeout=15, cwd=project_root,
         )
         if proc.returncode != 0:
-            result.error = proc.stderr[:200] if hasattr(result, "error") else None
             return result
-
-        import json
-        data = json.loads(proc.stdout)
+        import json as _json
+        data = _json.loads(proc.stdout)
         body = data.get("body") or ""
         title = data.get("title") or ""
-        labels = [l.get("name", "") for l in data.get("labels", [])]
-
+        labels = [lbl.get("name", "") for lbl in data.get("labels", [])]
         result.raw_body = body
         result.operating_mode = "full" if "full" in " ".join(labels).lower() else "compact"
-
-        # Extract sections from MBOP issue template or ad-hoc issue body
         result.what = _extract_section(body, ["### What", "**What**", "what"]) or title
         result.where = _extract_section(body, ["### Where", "**Where**", "where"])
         result.why = _extract_section(body, ["### Why", "**Why**", "why"])
         result.constraints = _extract_list_section(body, ["### Constraints", "**Constraints**"])
         result.acceptance_criteria = _extract_acceptance_criteria(body)
         result.extraction_ok = True
-
-    except Exception as exc:  # noqa: BLE001
-        # Best-effort — log but never crash
-        _ = exc  # suppress unused warning; error is non-fatal
-
+    except Exception:  # noqa: BLE001
+        pass
     return result
 
 
 def _extract_section(body: str, headers: List[str]) -> str:
-    """Extract text under the first matching header, up to the next header."""
     for header in headers:
         idx = body.find(header)
         if idx == -1:
             continue
         start = idx + len(header)
-        # Find next markdown header (## or ### or bold **)
         rest = body[start:]
         match = re.search(r"\n#{1,4} |\n\*\*", rest)
         chunk = rest[: match.start()] if match else rest
@@ -142,7 +125,6 @@ def _extract_section(body: str, headers: List[str]) -> str:
 
 
 def _extract_list_section(body: str, headers: List[str]) -> List[str]:
-    """Extract a bulleted list under the first matching header."""
     text = _extract_section(body, headers)
     items = []
     for line in text.splitlines():
@@ -155,17 +137,15 @@ def _extract_list_section(body: str, headers: List[str]) -> List[str]:
 
 
 def _extract_acceptance_criteria(body: str) -> List[str]:
-    """Extract AC items (checkbox lines) from issue body."""
     criteria = []
     for line in body.splitlines():
         stripped = line.strip()
-        # Match: - [ ] AC or - [x] AC or - [ ] ...
         m = re.match(r"-\s*\[[ xX]\]\s*(.+)", stripped)
         if m:
             ac_text = m.group(1).strip()
             if ac_text and not ac_text.lower().startswith("_"):
                 criteria.append(ac_text)
-    return criteria[:20]  # cap at 20
+    return criteria[:20]
 
 
 # ---------------------------------------------------------------------------
@@ -173,16 +153,10 @@ def _extract_acceptance_criteria(body: str) -> List[str]:
 # ---------------------------------------------------------------------------
 
 _STUB_PATTERNS = [
-    "# placeholder",
-    "# todo",
-    "# fixme",
-    "# hack",
-    "raise notimplementederror",
-    "pass  # stub",
-    "... # stub",
+    "# placeholder", "# todo", "# fixme", "# hack",
+    "raise notimplementederror", "pass  # stub", "... # stub",
 ]
-
-_MAX_PYTEST_SECONDS = 120  # hard cap for post-completion gate test run
+_MAX_PYTEST_SECONDS = 120
 
 
 def mbop_phase9_quality_gate(
@@ -190,16 +164,10 @@ def mbop_phase9_quality_gate(
     modified_files: List[str],
     run_pytest: bool = True,
 ) -> MBOPQualityGateResult:
-    """Run post-completion quality gate (Phase 9).
-
-    Checks:
-    1. No stub/TODO patterns in modified source files.
-    2. pytest passes on modified test files (optional, best-effort).
-    """
+    """Run post-completion quality gate (Phase 9)."""
     result = MBOPQualityGateResult()
     root = Path(project_root)
 
-    # --- Stub pattern scan ---
     stub_found: List[str] = []
     for rel_path in modified_files:
         full = root / rel_path
@@ -214,20 +182,17 @@ def mbop_phase9_quality_gate(
             pass
     result.stub_patterns_found = stub_found
 
-    # --- pytest on modified test files ---
     test_files = [f for f in modified_files if re.search(r"test.*\.py$|\.py.*test", f)]
     result.test_files_checked = test_files
 
     if run_pytest and test_files:
         try:
             import sys as _sys
-            # Use project venv pytest if present, otherwise fall back to sys.executable -m pytest
             _venv_pytest = Path(project_root) / ".venv" / "bin" / "pytest"
             if _venv_pytest.exists():
                 _pytest_cmd = [str(_venv_pytest)]
             else:
                 _pytest_cmd = [_sys.executable, "-m", "pytest"]
-                # Verify pytest is importable
                 _check = subprocess.run(
                     [_sys.executable, "-m", "pytest", "--version"],
                     capture_output=True, text=True, timeout=5, cwd=project_root,
@@ -237,19 +202,12 @@ def mbop_phase9_quality_gate(
                     result.evidence = "pytest not found — skipped"
                     result.passed = len(stub_found) == 0
                     return result
-
             cmd = _pytest_cmd + ["--tb=short", "-q", "--no-header"] + test_files
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=_MAX_PYTEST_SECONDS,
-                cwd=project_root,
-            )
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  timeout=_MAX_PYTEST_SECONDS, cwd=project_root)
             result.pytest_ran = True
             result.pytest_passed = proc.returncode == 0
-            out = (proc.stdout + proc.stderr)[-1000:]
-            result.evidence = out
+            result.evidence = (proc.stdout + proc.stderr)[-1000:]
         except subprocess.TimeoutExpired:
             result.pytest_ran = True
             result.pytest_passed = False
@@ -257,16 +215,13 @@ def mbop_phase9_quality_gate(
         except Exception as exc:  # noqa: BLE001
             result.error = f"pytest error: {exc}"
     elif not test_files:
-        result.pytest_ran = False
         result.evidence = "no test files in diff — pytest skipped"
     else:
         result.evidence = "pytest disabled by config"
 
-    # Aggregate pass/fail
     stub_ok = len(stub_found) == 0
     pytest_ok = (not result.pytest_ran) or result.pytest_passed
     result.passed = stub_ok and pytest_ok
-
     if not result.passed:
         reasons = []
         if not stub_ok:
@@ -274,7 +229,6 @@ def mbop_phase9_quality_gate(
         if result.pytest_ran and not result.pytest_passed:
             reasons.append("pytest FAIL")
         result.evidence = "; ".join(reasons) + " | " + result.evidence
-
     return result
 
 
@@ -282,50 +236,41 @@ def mbop_phase9_quality_gate(
 # Phase 10 — Satisfaction Gate
 # ---------------------------------------------------------------------------
 
+_STOP_WORDS = {
+    "should", "must", "shall", "when", "then", "given", "that", "have", "been",
+    "with", "from", "into", "will", "this", "there", "their", "which", "about",
+    "would", "could", "other", "more", "also", "than", "these", "those",
+}
+
+
 def mbop_phase10_satisfaction_gate(
     intake: MBOPIntakeResult,
     diff_text: str,
     commit_message: str,
 ) -> MBOPSatisfactionGateResult:
-    """Check that acceptance criteria from intake are addressed in the diff/commit.
-
-    This is a heuristic check: we look for keywords from each AC in the diff.
-    Advisory-only — a failed satisfaction gate is surfaced but never blocks.
-    """
+    """Check that ACs from intake appear in the diff/commit (heuristic). Advisory-only."""
     result = MBOPSatisfactionGateResult()
     criteria = intake.acceptance_criteria
     if not criteria:
         result.passed = True
         result.evidence = "no AC defined in issue — satisfaction gate vacuously PASS"
         return result
-
     haystack = (diff_text + "\n" + commit_message).lower()
     for ac in criteria:
         result.criteria_checked.append(ac)
-        # Extract keywords: words > 4 chars, no stop words
-        keywords = [w.lower() for w in re.findall(r"\b\w{5,}\b", ac)
-                    if w.lower() not in _STOP_WORDS]
+        keywords = [w.lower() for w in re.findall(r"\b\w{5,}\b", ac) if w.lower() not in _STOP_WORDS]
         if not keywords:
-            # Short AC — check any word
             keywords = [w.lower() for w in re.findall(r"\b\w{3,}\b", ac)]
         covered = any(kw in haystack for kw in keywords[:5])
         if covered:
             result.criteria_covered.append(ac)
         else:
             result.criteria_missing.append(ac)
-
     total = len(criteria)
     covered_count = len(result.criteria_covered)
-    result.passed = covered_count >= max(1, total // 2)  # ≥50% ACs covered
+    result.passed = covered_count >= max(1, total // 2)
     result.evidence = f"{covered_count}/{total} ACs keyword-matched in diff"
     return result
-
-
-_STOP_WORDS = {
-    "should", "must", "shall", "when", "then", "given", "that", "have", "been",
-    "with", "from", "into", "will", "this", "there", "their", "which", "about",
-    "would", "could", "other", "more", "also", "than", "these", "those",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -349,13 +294,11 @@ def mbop_phase11_post_task_eval(
         lessons.append(f"ACs not addressed: {satisfaction.criteria_missing[:2]}")
     if failure_class:
         lessons.append(f"failure_class={failure_class}")
-
     qg = "PASS" if quality.passed else "FAIL"
     sg = "PASS" if satisfaction.passed else "ADVISORY"
     summary = (
         f"Issue #{intake.issue_number} | QG:{qg} SG:{sg} | "
-        f"Duration:{run_duration_seconds:.0f}s | "
-        f"Mode:{intake.operating_mode}"
+        f"Duration:{run_duration_seconds:.0f}s | Mode:{intake.operating_mode}"
     )
     return MBOPEvalResult(summary=summary, lessons=lessons)
 
@@ -370,58 +313,38 @@ def mbop_phase12_next_step(
     failure_class: str = "",
     open_issues: Optional[List[int]] = None,
 ) -> List[str]:
-    """On decomposition_required, suggest (but do not create) sub-issues.
-
-    Returns a list of suggested sub-issue titles with MBOP intake structure.
-    Advisory-only: creates GitHub sub-issues only if explicitly enabled.
-    """
+    """On decomposition_required, suggest sub-issues. Advisory-only."""
     if failure_class != "decomposition_required":
         return []
-
-    suggestions = []
     what = intake.what or f"Issue #{intake.issue_number}"
-    suggestions.append(
-        f"[MBOP sub] Phase 1 requirements analysis for: {what[:60]}"
-    )
-    suggestions.append(
-        f"[MBOP sub] Phase 2 implementation for: {what[:60]}"
-    )
-    suggestions.append(
-        f"[MBOP sub] Phase 3 tests and verification for: {what[:60]}"
-    )
-    return suggestions
+    return [
+        f"[MBOP sub] Phase 1 requirements analysis for: {what[:60]}",
+        f"[MBOP sub] Phase 2 implementation for: {what[:60]}",
+        f"[MBOP sub] Phase 3 tests and verification for: {what[:60]}",
+    ]
 
 
 # ---------------------------------------------------------------------------
-# Run helper — get modified files from git diff
+# Run helpers — git diff utilities
 # ---------------------------------------------------------------------------
 
 def _get_modified_files(project_root: str, base_branch: str = "main") -> List[str]:
     """Get list of files modified vs base branch."""
-    try:
-        proc = subprocess.run(
-            ["git", "diff", "--name-only", base_branch, "HEAD"],
-            capture_output=True, text=True, timeout=10, cwd=project_root,
-        )
-        if proc.returncode == 0:
-            return [f.strip() for f in proc.stdout.splitlines() if f.strip()]
-    except Exception:  # noqa: BLE001
-        pass
-    # Fallback: diff against HEAD^
-    try:
-        proc = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD^", "HEAD"],
-            capture_output=True, text=True, timeout=10, cwd=project_root,
-        )
-        if proc.returncode == 0:
-            return [f.strip() for f in proc.stdout.splitlines() if f.strip()]
-    except Exception:  # noqa: BLE001
-        pass
+    for cmd in [
+        ["git", "diff", "--name-only", base_branch, "HEAD"],
+        ["git", "diff", "--name-only", "HEAD^", "HEAD"],
+    ]:
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10, cwd=project_root)
+            if proc.returncode == 0:
+                return [f.strip() for f in proc.stdout.splitlines() if f.strip()]
+        except Exception:  # noqa: BLE001
+            pass
     return []
 
 
 def _get_diff_text(project_root: str, base_branch: str = "main") -> str:
-    """Get unified diff text vs base branch (truncated to 10k chars)."""
+    """Get unified diff text vs base branch (truncated)."""
     try:
         proc = subprocess.run(
             ["git", "diff", base_branch, "HEAD"],
@@ -449,71 +372,124 @@ def _get_last_commit_message(project_root: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Main entry point — wrap a supervisor run with MBOP phases
+# Disk persistence — .igris/mbop_events.jsonl
+# ---------------------------------------------------------------------------
+
+def _persist_event(
+    project_root: str,
+    run_id: str,
+    issue_number: int,
+    phase: str,
+    status: str,
+    detail: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Append one MBOP event line to .igris/mbop_events.jsonl. Best-effort, never raises."""
+    try:
+        import json as _json
+        import threading as _threading
+        record: Dict[str, Any] = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "ts_epoch": time.time(),
+            "run_id": run_id or "",
+            "issue_number": issue_number,
+            "phase": phase,
+            "status": status,
+            "detail": (detail or "")[:500],
+        }
+        if extra:
+            safe: Dict[str, Any] = {}
+            for k, v in extra.items():
+                try:
+                    _json.dumps(v)
+                    safe[k] = v
+                except (TypeError, ValueError):
+                    safe[k] = str(v)
+            record["extra"] = safe
+        log_path = Path(project_root) / ".igris" / "mbop_events.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        line = _json.dumps(record, ensure_ascii=False) + "\n"
+        # Use a module-level lock to be thread-safe
+        if not hasattr(_persist_event, "_lock"):
+            _persist_event._lock = _threading.Lock()  # type: ignore[attr-defined]
+        with _persist_event._lock:  # type: ignore[attr-defined]
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(line)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Main entry points
 # ---------------------------------------------------------------------------
 
 def mbop_pre_run(
     issue_number: int,
     project_root: str,
-    run_add_fn: Any = None,  # SupervisorRun.add callable
+    run_add_fn: Any = None,
+    run_id: str = "",
 ) -> MBOPIntakeResult:
     """Execute MBOP Phase 1 (Intake) before the supervisor run.
 
-    Reads GitHub issue, extracts structured intake, logs to run.
-    Returns MBOPIntakeResult (always — never raises).
+    Logs to run.events AND to .igris/mbop_events.jsonl.
+    Always returns an MBOPIntakeResult — never raises.
     """
     intake = MBOPIntakeResult(issue_number=issue_number)
     try:
         intake = mbop_phase1_intake(issue_number, project_root)
-        if run_add_fn and intake.extraction_ok:
-            run_add_fn(
-                "mbop_phase1_intake",
-                "success",
+        if intake.extraction_ok:
+            detail = (
                 f"MBOP Phase 1 Intake: #{issue_number} | "
                 f"What: {intake.what[:80]} | "
-                f"ACs: {len(intake.acceptance_criteria)} | "
-                f"Mode: {intake.operating_mode}",
-                issue_number=issue_number,
-                what=intake.what[:200],
-                constraints=intake.constraints[:5],
-                acceptance_criteria=intake.acceptance_criteria[:5],
+                f"ACs: {len(intake.acceptance_criteria)} | Mode: {intake.operating_mode}"
             )
-        elif run_add_fn:
-            run_add_fn(
-                "mbop_phase1_intake",
-                "skipped",
-                f"MBOP Phase 1 Intake: #{issue_number} — issue not readable (gh CLI or no issue number)",
-                issue_number=issue_number,
+            extra: Dict[str, Any] = {
+                "what": intake.what[:200], "where": intake.where[:200],
+                "why": intake.why[:200], "constraints": intake.constraints[:5],
+                "acceptance_criteria": intake.acceptance_criteria[:5],
+                "operating_mode": intake.operating_mode,
+            }
+            if run_add_fn:
+                run_add_fn("mbop_phase1_intake", "success", detail,
+                           issue_number=issue_number, **extra)
+        else:
+            detail = (
+                f"MBOP Phase 1 Intake: #{issue_number} — "
+                "issue not readable (gh CLI unavailable or no issue number)"
             )
+            extra = {}
+            if run_add_fn:
+                run_add_fn("mbop_phase1_intake", "skipped", detail, issue_number=issue_number)
+        _persist_event(project_root, run_id, issue_number, "mbop_phase1_intake",
+                       "success" if intake.extraction_ok else "skipped", detail, extra or None)
     except Exception as exc:  # noqa: BLE001
+        err_detail = f"MBOP intake error (non-fatal): {exc}"
         if run_add_fn:
             try:
-                run_add_fn("mbop_phase1_intake", "error", f"MBOP intake error (non-fatal): {exc}")
+                run_add_fn("mbop_phase1_intake", "error", err_detail)
             except Exception:  # noqa: BLE001
                 pass
+        _persist_event(project_root, run_id, issue_number, "mbop_phase1_intake", "error", err_detail)
     return intake
 
 
 def mbop_post_run(
-    run: Any,  # SupervisorRun
+    run: Any,
     intake: MBOPIntakeResult,
     project_root: str,
     run_start_ts: float,
     enforce_quality_gate: bool = False,
+    run_id: str = "",
 ) -> None:
-    """Execute MBOP Phases 9–12 after the supervisor run completes.
+    """Execute MBOP Phases 9-12 after the supervisor run.
 
-    - Phase 9: Quality Gate (pytest + stub scan)
-    - Phase 10: Satisfaction Gate (AC coverage)
-    - Phase 11: Post-Task Eval (summary)
-    - Phase 12: Next-Step (decomposition suggestions)
-
-    Never raises. If enforce_quality_gate=True and QG fails, run.status
-    is changed to "blocked" with failure_class "mbop_quality_gate_failed".
+    Logs to run.events AND to .igris/mbop_events.jsonl.
+    Never raises. enforce_quality_gate=True (opt-in) can downgrade to blocked.
     """
     try:
         run_status = getattr(run, "status", "")
         failure_class = getattr(run, "failure_class", "") or ""
+        issue_number = intake.issue_number
         duration = time.time() - run_start_ts
 
         # ---- Phase 9: Quality Gate ----
@@ -530,40 +506,40 @@ def mbop_post_run(
             quality.error = str(exc)
 
         qg_status = "pass" if quality.passed else "fail"
+        qg_detail = (
+            f"MBOP Phase 9 Quality Gate: {qg_status.upper()} | "
+            f"pytest={'PASS' if quality.pytest_passed else ('FAIL' if quality.pytest_ran else 'skipped')} | "
+            f"stubs={quality.stub_patterns_found[:3]} | {quality.evidence[:150]}"
+        )
+        qg_extra: Dict[str, Any] = {
+            "run_status": run_status, "pytest_passed": quality.pytest_passed,
+            "pytest_ran": quality.pytest_ran, "stub_patterns": quality.stub_patterns_found[:5],
+            "test_files": quality.test_files_checked[:5], "modified_files": modified_files[:10],
+            "enforce": enforce_quality_gate,
+        }
         try:
-            run.add(
-                "mbop_phase9_quality_gate",
-                qg_status,
-                f"MBOP Phase 9 Quality Gate: {qg_status.upper()} | "
-                f"pytest={'PASS' if quality.pytest_passed else ('FAIL' if quality.pytest_ran else 'skipped')} | "
-                f"stubs={quality.stub_patterns_found[:3]} | {quality.evidence[:200]}",
-                pytest_passed=quality.pytest_passed,
-                pytest_ran=quality.pytest_ran,
-                stub_patterns=quality.stub_patterns_found[:5],
-                test_files=quality.test_files_checked[:5],
-            )
+            run.add("mbop_phase9_quality_gate", qg_status, qg_detail, **qg_extra)
         except Exception:  # noqa: BLE001
             pass
+        _persist_event(project_root, run_id, issue_number, "mbop_phase9_quality_gate", qg_status, qg_detail, qg_extra)
 
-        # If quality gate fails and enforcement is on, downgrade run to blocked
         if not quality.passed and enforce_quality_gate and run_status == "completed":
+            enf_detail = (
+                "Run downgraded: MBOP Quality Gate FAILED (enforce=True). "
+                f"Stubs: {quality.stub_patterns_found[:3]}. "
+                f"pytest: {'FAIL' if quality.pytest_ran and not quality.pytest_passed else 'not run'}"
+            )
             try:
                 run.status = "blocked"
                 run.failure_class = "mbop_quality_gate_failed"
                 run.outcome = "Blocked — MBOP Quality Gate failed"
-                run.add(
-                    "mbop_quality_gate_enforcement",
-                    "blocked",
-                    "Run downgraded to blocked: MBOP quality gate failed (enforce=True). "
-                    f"Stubs: {quality.stub_patterns_found[:3]}. "
-                    f"pytest: {'FAIL' if quality.pytest_ran and not quality.pytest_passed else 'not run'}",
-                )
+                run.add("mbop_quality_gate_enforcement", "blocked", enf_detail)
             except Exception:  # noqa: BLE001
                 pass
+            _persist_event(project_root, run_id, issue_number, "mbop_quality_gate_enforcement", "blocked", enf_detail)
 
         # ---- Phase 10: Satisfaction Gate ----
-        diff_text = ""
-        commit_msg = ""
+        diff_text, commit_msg = "", ""
         try:
             diff_text = _get_diff_text(project_root)
             commit_msg = _get_last_commit_message(project_root)
@@ -577,47 +553,55 @@ def mbop_post_run(
             satisfaction.error = str(exc)
 
         sg_status = "pass" if satisfaction.passed else "advisory"
+        sg_detail = (
+            f"MBOP Phase 10 Satisfaction Gate: {sg_status.upper()} | "
+            f"{satisfaction.evidence} | missing={satisfaction.criteria_missing[:3]}"
+        )
+        sg_extra: Dict[str, Any] = {
+            "criteria_checked": satisfaction.criteria_checked[:10],
+            "criteria_covered": satisfaction.criteria_covered[:10],
+            "criteria_missing": satisfaction.criteria_missing[:10],
+            "commit_msg_snippet": commit_msg[:100],
+        }
         try:
-            run.add(
-                "mbop_phase10_satisfaction_gate",
-                sg_status,
-                f"MBOP Phase 10 Satisfaction Gate: {sg_status.upper()} | "
-                f"{satisfaction.evidence[:200]} | "
-                f"missing={satisfaction.criteria_missing[:3]}",
-                criteria_covered=satisfaction.criteria_covered[:5],
-                criteria_missing=satisfaction.criteria_missing[:5],
-            )
+            run.add("mbop_phase10_satisfaction_gate", sg_status, sg_detail, **sg_extra)
         except Exception:  # noqa: BLE001
             pass
+        _persist_event(project_root, run_id, issue_number, "mbop_phase10_satisfaction_gate", sg_status, sg_detail, sg_extra)
 
         # ---- Phase 11: Post-Task Evaluation ----
+        eval_result = MBOPEvalResult()
         try:
-            eval_result = mbop_phase11_post_task_eval(
-                intake, quality, satisfaction, duration, failure_class
-            )
-            run.add(
-                "mbop_phase11_post_task_eval",
-                "done",
-                f"MBOP Phase 11 Post-Task Eval: {eval_result.summary}",
-                lessons=eval_result.lessons[:5],
-            )
+            eval_result = mbop_phase11_post_task_eval(intake, quality, satisfaction, duration, failure_class)
         except Exception:  # noqa: BLE001
             pass
+        eval_detail = f"MBOP Phase 11 Post-Task Eval: {eval_result.summary}"
+        eval_extra: Dict[str, Any] = {
+            "duration_seconds": round(duration, 1), "lessons": eval_result.lessons[:5],
+            "quality_gate": qg_status, "satisfaction_gate": sg_status,
+            "failure_class": failure_class, "run_status": run_status,
+        }
+        try:
+            run.add("mbop_phase11_post_task_eval", "done", eval_detail, **eval_extra)
+        except Exception:  # noqa: BLE001
+            pass
+        _persist_event(project_root, run_id, issue_number, "mbop_phase11_post_task_eval", "done", eval_detail, eval_extra)
 
-        # ---- Phase 12: Next-Step Propagation ----
+        # ---- Phase 12: Next-Step ----
         try:
             suggestions = mbop_phase12_next_step(intake, project_root, failure_class)
             if suggestions:
-                run.add(
-                    "mbop_phase12_next_step",
-                    "advisory",
-                    f"MBOP Phase 12 Next-Step: decomposition detected | "
-                    f"suggested sub-issues: {suggestions[:3]}",
-                    suggestions=suggestions,
+                ns_detail = (
+                    f"MBOP Phase 12 Next-Step: decomposition_required | suggested: {suggestions[:2]}"
                 )
+                ns_extra: Dict[str, Any] = {"suggestions": suggestions, "failure_class": failure_class}
+                try:
+                    run.add("mbop_phase12_next_step", "advisory", ns_detail, **ns_extra)
+                except Exception:  # noqa: BLE001
+                    pass
+                _persist_event(project_root, run_id, issue_number, "mbop_phase12_next_step", "advisory", ns_detail, ns_extra)
         except Exception:  # noqa: BLE001
             pass
 
     except Exception:  # noqa: BLE001
-        # Top-level guard — MBOP post-run never crashes the supervisor
         pass
