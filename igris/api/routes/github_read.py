@@ -5,7 +5,7 @@ All reads are scope-checked via AuthorizationGate and logged for audit.
 """
 
 import os
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -80,6 +80,8 @@ async def get_issue(
         if not issue:
             raise HTTPException(status_code=404, detail="Issue not found")
         return issue
+    except HTTPException:
+        raise
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except RuntimeError as e:
@@ -100,6 +102,8 @@ async def get_pr(
         if not pr:
             raise HTTPException(status_code=404, detail="PR not found")
         return pr
+    except HTTPException:
+        raise
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except RuntimeError as e:
@@ -127,6 +131,8 @@ async def list_issues(
             dry_run=dry_run,
         )
         return issues
+    except HTTPException:
+        raise
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except RuntimeError as e:
@@ -148,6 +154,8 @@ async def get_file(
         if not file_data:
             raise HTTPException(status_code=404, detail="File not found")
         return file_data
+    except HTTPException:
+        raise
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except RuntimeError as e:
@@ -167,6 +175,8 @@ async def get_actions(
         gateway = _get_gateway()
         runs = gateway.read_actions(workflow_name=workflow, status=status, dry_run=dry_run)
         return runs
+    except HTTPException:
+        raise
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except RuntimeError as e:
