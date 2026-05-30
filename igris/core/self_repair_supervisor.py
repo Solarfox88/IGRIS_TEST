@@ -1069,8 +1069,13 @@ class LocalSupervisorBackend:
         if not restore.success:
             return restore
         # Remove untracked files left by a failed supervised branch.
-        # Scope covers all common project directories (not just igris/tests/docs).
-        clean = self._run(["git", "clean", "-fd", "."], timeout=60)
+        # igris/ and tests/ are excluded so that implementation files written by the
+        # reasoning worker but not yet committed survive to the next attempt. Untracked
+        # files are NOT affected by git branch switches (checkout main / create branch),
+        # so any files preserved here carry forward automatically to the new rank branch.
+        # This prevents IGRIS's work from being silently discarded when the reasoning
+        # loop signals no_diff_repair because new files were never staged/committed.
+        clean = self._run(["git", "clean", "-fd", "-e", "igris", "-e", "tests", "."], timeout=60)
         if not clean.success:
             return clean
         return CommandResult(True, restore.output + clean.output, "", 0)
