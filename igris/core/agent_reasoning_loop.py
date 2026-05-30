@@ -358,6 +358,54 @@ class AgentReasoningLoop:
                     e for e in self._recent_errors
                     if "READ LOOP" not in str(e.get("error", ""))
                 ]
+
+            # Auto-commit guard: after 20+ consecutive read-only steps, if there are
+            # untracked implementation files in igris/ or tests/, stage and commit them
+            # automatically so the work is not lost to cleanup cycles. (#1069)
+            _READ_LOOP_AUTO_COMMIT_THRESHOLD = 20
+            if (
+                self._steps_without_write >= _READ_LOOP_AUTO_COMMIT_THRESHOLD
+                and self._steps_without_write % 10 == 0  # try once every 10 steps
+            ):
+                try:
+                    import subprocess as _sp
+                    _status = _sp.run(
+                        ["git", "status", "--porcelain"],
+                        capture_output=True, text=True,
+                        cwd=str(self.project_root), timeout=10,
+                    )
+                    _untracked = [
+                        l[3:] for l in (_status.stdout or "").splitlines()
+                        if l.startswith("?? ") and (
+                            l[3:].startswith("igris/") or l[3:].startswith("tests/")
+                        )
+                    ]
+                    if _untracked:
+                        _sp.run(
+                            ["git", "add"] + _untracked,
+                            cwd=str(self.project_root), timeout=15,
+                        )
+                        _ac = _sp.run(
+                            ["git", "commit", "-m",
+                             f"feat: auto-committed by read-loop guard after "
+                             f"{self._steps_without_write} read-only steps"],
+                            capture_output=True, text=True,
+                            cwd=str(self.project_root), timeout=30,
+                        )
+                        if _ac.returncode == 0:
+                            self._steps_without_write = 0
+                            self._world_state.pop("READ_LOOP_WARNING", None)
+                            self._world_state["auto_committed"] = (
+                                f"Auto-committed {len(_untracked)} file(s): "
+                                + ", ".join(_untracked[:3])
+                            )
+                            self._recent_errors = [
+                                e for e in self._recent_errors
+                                if "READ LOOP" not in str(e.get("error", ""))
+                            ]
+                except Exception:
+                    pass  # never crash the reasoning loop over auto-commit
+
             self._steps.append(step)
             if step_callback is not None:
                 try:
