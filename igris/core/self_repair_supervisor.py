@@ -7547,6 +7547,7 @@ def start_supervised_rank_async(data: Dict[str, Any], project_root: str) -> Supe
                 issue_number=config.issue_number,
                 project_root=project_root,
                 run_add_fn=run.add,
+                run_id=run.run_id,
             )
         except Exception:  # noqa: BLE001
             pass  # best-effort — never block the run
@@ -7574,6 +7575,7 @@ def start_supervised_rank_async(data: Dict[str, Any], project_root: str) -> Supe
                 project_root=project_root,
                 run_start_ts=_run_start,
                 enforce_quality_gate=mbop_enforce_qg,
+                run_id=run.run_id,
             )
         except Exception:  # noqa: BLE001
             pass  # best-effort — never crash after supervisor completed
