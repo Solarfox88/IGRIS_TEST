@@ -228,9 +228,12 @@ def _classify_goal(request: AssignmentRequest) -> Tuple[str, str, List[str]]:
         reasons.append("max_steps or reasoning_timeout signal")
         return "backend_coder", "complex_implementation", reasons
 
-    # Security / devops by risk or keywords
-    if request.risk_level in ("high", "very_high") or _contains_security(goal):
-        reasons.append("high risk or security keywords")
+    # Security: only route to security_reviewer on explicit security content —
+    # NOT on risk_level alone. risk_level=high means "historically hard task",
+    # not "security task". Routing a feature implementation to security_reviewer
+    # because it failed 23 times causes no_diff_repair (reviewer never writes code).
+    if _contains_security(goal) or "security" in labels:
+        reasons.append("security keywords in goal")
         return "security_reviewer", "security_review", reasons
 
     if _contains_any(goal, _DEVOPS_KEYWORDS) or "devops" in labels:
