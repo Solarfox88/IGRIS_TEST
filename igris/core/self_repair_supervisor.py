@@ -3931,12 +3931,6 @@ class SelfRepairSupervisor:
                     "running",
                     "Running supervised rank reasoning as single stage.",
                 )
-                run.add(
-                    "rank_reasoning",
-                    "running",
-                    "Running supervised rank reasoning",
-                    timeout_seconds=config.reasoning_timeout_seconds,
-                )
                 _routed_profile = (
                     assignment_decision.preferred_profile
                     if assignment_decision is not None
@@ -3968,6 +3962,15 @@ class SelfRepairSupervisor:
                         reasoning_timeout,
                         int(os.getenv("IGRIS_LARGE_MISSION_REASONING_TIMEOUT", "240")),
                     )
+                # Log the actual adjusted timeout — event was previously logged before
+                # the profile-aware adjustment, showing 900s even when strong models
+                # would use 2700s. Now logged AFTER adjustment for accurate audit trail.
+                run.add(
+                    "rank_reasoning",
+                    "running",
+                    "Running supervised rank reasoning",
+                    timeout_seconds=reasoning_timeout,
+                )
                 reasoning = self.backend.run_reasoning(
                     config.goal,
                     max_steps=max_reasoning_steps,
