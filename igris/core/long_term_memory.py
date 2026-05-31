@@ -8,6 +8,7 @@ for maintaining a concise compressed view of past events.
 from __future__ import annotations
 
 import json
+import logging
 import random
 import string
 import time
@@ -15,6 +16,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+_log = logging.getLogger("igris.memory.long_term")
 
 from igris.core.safety import redact_secrets
 from igris.models.config import CONFIG
@@ -99,22 +102,38 @@ class LongTermMemory:
     # ------------------------------------------------------------------
 
     def _load(self) -> None:
-        """Load state from disk."""
+        """Load state from disk.
+
+        Epic #1073: non-silent failure — logs warnings on corrupt/missing files
+        and returns empty state rather than crashing the caller.
+        """
         if self._entries_file.exists():
-            with open(self._entries_file, "r") as f:
-                raw = json.load(f)
-                for k, v in raw.items():
-                    self._entries[k] = MemoryEntry(**v)
+            try:
+                with open(self._entries_file, "r") as f:
+                    raw = json.load(f)
+                    for k, v in raw.items():
+                        self._entries[k] = MemoryEntry(**v)
+            except Exception as exc:
+                _log.warning("LongTermMemory: failed to load entries from %s: %s", self._entries_file, exc)
+                self._entries = {}  # return empty rather than crash
         if self._index_file.exists():
-            with open(self._index_file, "r") as f:
-                raw = json.load(f)
-                for k, v in raw.items():
-                    self._index[k] = DomainIndex(**v)
+            try:
+                with open(self._index_file, "r") as f:
+                    raw = json.load(f)
+                    for k, v in raw.items():
+                        self._index[k] = DomainIndex(**v)
+            except Exception as exc:
+                _log.warning("LongTermMemory: failed to load index from %s: %s", self._index_file, exc)
+                self._index = {}
         if self._summary_file.exists():
-            with open(self._summary_file, "r") as f:
-                raw = json.load(f)
-                for k, v in raw.items():
-                    self._summaries[k] = RollingSummary(**v)
+            try:
+                with open(self._summary_file, "r") as f:
+                    raw = json.load(f)
+                    for k, v in raw.items():
+                        self._summaries[k] = RollingSummary(**v)
+            except Exception as exc:
+                _log.warning("LongTermMemory: failed to load summaries from %s: %s", self._summary_file, exc)
+                self._summaries = {}
 
     def _save(self) -> None:
         """Save state to disk."""
@@ -315,6 +334,85 @@ class LongTermMemory:
             del self._summaries[domain]
         self._save()
         return True
+
+    # ------------------------------------------------------------------
+    # Epic #1073 — TTL / staleness helpers
+    # ------------------------------------------------------------------
+
+    def is_entry_stale(self, entry_id: str, ttl_seconds: float) -> bool:
+        """Return True if the entry is older than *ttl_seconds*.
+
+        Useful for callers that want to skip outdated memory facts without
+        reading the full entry list.
+        """
+        entry = self._entries.get(entry_id)
+        if entry is None:
+            return True
+        return (time.time() - entry.timestamp) > ttl_seconds
+
+    def get_fresh_entries(
+        self,
+        domain: str,
+        ttl_seconds: float,
+        limit: int = 100,
+    ) -> List[MemoryEntry]:
+        """Return only entries younger than *ttl_seconds* for *domain*.
+
+        Epic #1073: callers no longer silently receive stale data — entries
+        outside the TTL window are excluded. A warning is logged when stale
+        entries are present so operators can tune TTL values.
+        """
+        all_entries = self.get_entries(domain, limit=limit * 2)
+        now = time.time()
+        fresh = [e for e in all_entries if (now - e.timestamp) <= ttl_seconds]
+        stale_count = len(all_entries) - len(fresh)
+        if stale_count > 0:
+            _log.info(
+                "LongTermMemory.get_fresh_entries: domain=%r, %d stale entries skipped (ttl=%.0fs)",
+                domain, stale_count, ttl_seconds,
+            )
+        return fresh[:limit]
+
+    def healthcheck(self) -> Dict[str, Any]:
+        """Return a structured health report for the memory store.
+
+        Epic #1073: non-silent — each check logs a warning on failure and
+        returns a 'degraded' status so callers can surface the problem.
+        """
+        report: Dict[str, Any] = {
+            "entry_count": 0,
+            "domain_count": 0,
+            "summary_count": 0,
+            "files_ok": True,
+            "status": "healthy",
+        }
+        try:
+            report["entry_count"] = len(self._entries)
+            report["domain_count"] = len(self._index)
+            report["summary_count"] = len(self._summaries)
+        except Exception as exc:
+            _log.warning("LongTermMemory.healthcheck: failed to count entries: %s", exc)
+            report["status"] = "degraded"
+            report["error"] = str(exc)
+            return report
+
+        # Verify files are readable and not corrupt
+        for file_path, label in [
+            (self._entries_file, "entries"),
+            (self._index_file, "index"),
+            (self._summary_file, "summary"),
+        ]:
+            if file_path.exists():
+                try:
+                    with open(file_path, "r") as f:
+                        json.load(f)
+                except Exception as exc:
+                    _log.warning("LongTermMemory.healthcheck: %s file corrupt: %s", label, exc)
+                    report["files_ok"] = False
+                    report["status"] = "degraded"
+                    report[f"{label}_error"] = str(exc)[:200]
+
+        return report
 
 
 # ---------------------------------------------------------------------------

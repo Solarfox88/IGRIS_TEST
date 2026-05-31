@@ -301,6 +301,61 @@ def create_router(deps) -> APIRouter:
             "dependency_graph": dependency_graph,
         }
 
+    @router.get("/api/memory/health")
+    async def api_memory_health() -> Dict[str, object]:
+        """Epic #1073 — Memory system health-check endpoint.
+
+        Returns the health status of each memory subsystem:
+        - long_term: entries.json / index.json / summary.json on disk
+        - memory_graph: SQLite node/edge counts
+        - decision_memory: failure/decision event counts
+
+        Returns HTTP 200 with {status: "healthy"|"degraded"|"unhealthy"}.
+        """
+        import time as _time
+        checks: Dict[str, object] = {}
+        overall = "healthy"
+
+        # 1. Long-term memory file system check
+        try:
+            from igris.core.long_term_memory import LongTermMemory
+            _ltm = LongTermMemory()
+            _entries = _ltm.get_entries("__health_probe__", limit=1)
+            checks["long_term"] = {"status": "ok", "reachable": True}
+        except Exception as exc:
+            _logger = logging.getLogger("igris.memory.health")
+            _logger.warning("Memory health: long_term check failed: %s", exc)
+            checks["long_term"] = {"status": "degraded", "error": str(exc)[:200]}
+            overall = "degraded"
+
+        # 2. Memory graph (SQLite)
+        try:
+            _g = _get_graph()
+            _node_count = _g.conn.execute("SELECT COUNT(*) FROM memory_nodes").fetchone()[0]
+            _edge_count = _g.conn.execute("SELECT COUNT(*) FROM memory_edges").fetchone()[0]
+            checks["memory_graph"] = {"status": "ok", "nodes": _node_count, "edges": _edge_count}
+        except Exception as exc:
+            _logger = logging.getLogger("igris.memory.health")
+            _logger.warning("Memory health: memory_graph check failed: %s", exc)
+            checks["memory_graph"] = {"status": "degraded", "error": str(exc)[:200]}
+            overall = "degraded"
+
+        # 3. Decision memory (JSON store)
+        try:
+            _failures = decision_memory.get_recent_failures(1, project_root=str(CONFIG.project_root))
+            checks["decision_memory"] = {"status": "ok", "reachable": True}
+        except Exception as exc:
+            _logger = logging.getLogger("igris.memory.health")
+            _logger.warning("Memory health: decision_memory check failed: %s", exc)
+            checks["decision_memory"] = {"status": "degraded", "error": str(exc)[:200]}
+            overall = "degraded"
+
+        return {
+            "status": overall,
+            "checks": checks,
+            "timestamp": _time.time(),
+        }
+
     @router.get("/api/memory/search")
     async def api_memory_search(q: str, node_type: Optional[str] = None, limit: int = 10) -> Dict[str, object]:
         results = _get_graph().query_by_intent(q, node_type=node_type, limit=limit)
