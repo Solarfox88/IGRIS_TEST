@@ -8148,11 +8148,14 @@ def start_supervised_rank_async(data: Dict[str, Any], project_root: str) -> Supe
             pass  # best-effort — never block the run
 
         # --- MBOP Phase 1: Intake (pre-run) ---
+        # Bug fix: always resolve issue_number from goal text when not explicit,
+        # so MBOP gets the real issue number and can extract ACs.
+        _mbop_issue_number = _parse_issue_number(config.issue_number, str(config.goal))
         _mbop_intake = None
         try:
             from igris.core.mbop_runner import mbop_pre_run
             _mbop_intake = mbop_pre_run(
-                issue_number=config.issue_number,
+                issue_number=_mbop_issue_number,
                 project_root=project_root,
                 run_add_fn=run.add,
                 run_id=run.run_id,
@@ -8164,10 +8167,10 @@ def start_supervised_rank_async(data: Dict[str, Any], project_root: str) -> Supe
         try:
             from igris.core.mbop_runner import _persist_event as _mbop_persist
             _mbop_persist(
-                project_root, run.run_id, config.issue_number,
+                project_root, run.run_id, _mbop_issue_number,
                 "mbop_phase2_preflight", "running",
-                f"MBOP Phase 2 Pre-flight: #{config.issue_number} | "
-                f"deps={'checking' if config.issue_number else 'skip'} env=ok"
+                f"MBOP Phase 2 Pre-flight: #{_mbop_issue_number} | "
+                f"deps={'checking' if _mbop_issue_number else 'skip'} env=ok"
             )
         except Exception:
             pass
@@ -8175,9 +8178,9 @@ def start_supervised_rank_async(data: Dict[str, Any], project_root: str) -> Supe
         # --- MBOP Phase 3: Mission Planning ---
         try:
             _mbop_persist(
-                project_root, run.run_id, config.issue_number,
+                project_root, run.run_id, _mbop_issue_number,
                 "mbop_phase3_planning", "running",
-                f"MBOP Phase 3 Mission Planning: #{config.issue_number} | "
+                f"MBOP Phase 3 Mission Planning: #{_mbop_issue_number} | "
                 f"goal={str(config.goal)[:80]}"
             )
         except Exception:
@@ -8205,10 +8208,10 @@ def start_supervised_rank_async(data: Dict[str, Any], project_root: str) -> Supe
             _run_status = str(getattr(run, "status", "") or "")
             # Phase 4: Implementation outcome
             _mbop_persist(
-                project_root, run.run_id, config.issue_number,
+                project_root, run.run_id, _mbop_issue_number,
                 "mbop_phase4_implementation",
                 "done" if _run_status == "completed" else "blocked",
-                f"MBOP Phase 4 Implementation: #{config.issue_number} | "
+                f"MBOP Phase 4 Implementation: #{_mbop_issue_number} | "
                 f"status={_run_status} failure_class={_failure_class}",
                 extra={"failure_class": _failure_class, "run_status": _run_status}
             )
@@ -8219,35 +8222,35 @@ def start_supervised_rank_async(data: Dict[str, Any], project_root: str) -> Supe
                 for e in getattr(run, "events", [])
             )
             _mbop_persist(
-                project_root, run.run_id, config.issue_number,
+                project_root, run.run_id, _mbop_issue_number,
                 "mbop_phase5_testing",
                 "ran" if _test_ran else "skipped",
-                f"MBOP Phase 5 Testing: #{config.issue_number} | "
+                f"MBOP Phase 5 Testing: #{_mbop_issue_number} | "
                 f"pytest={'ran' if _test_ran else 'skipped'}"
             )
             # Phase 6: Review
             _mbop_persist(
-                project_root, run.run_id, config.issue_number,
+                project_root, run.run_id, _mbop_issue_number,
                 "mbop_phase6_review",
                 "done",
-                f"MBOP Phase 6 Review: #{config.issue_number} | "
+                f"MBOP Phase 6 Review: #{_mbop_issue_number} | "
                 f"repair_cycles={_repair_cycles}"
             )
             # Phase 7: Repair
             _mbop_persist(
-                project_root, run.run_id, config.issue_number,
+                project_root, run.run_id, _mbop_issue_number,
                 "mbop_phase7_repair",
                 f"cycles={_repair_cycles}" if _repair_cycles > 0 else "none",
-                f"MBOP Phase 7 Repair: #{config.issue_number} | "
+                f"MBOP Phase 7 Repair: #{_mbop_issue_number} | "
                 f"cycles_used={_repair_cycles}",
                 extra={"repair_cycles_used": _repair_cycles}
             )
             # Phase 8: Completion check
             _mbop_persist(
-                project_root, run.run_id, config.issue_number,
+                project_root, run.run_id, _mbop_issue_number,
                 "mbop_phase8_completion_check",
                 "pass" if _run_status == "completed" else "fail",
-                f"MBOP Phase 8 Completion Check: #{config.issue_number} | "
+                f"MBOP Phase 8 Completion Check: #{_mbop_issue_number} | "
                 f"final_status={_run_status}"
             )
         except Exception:
@@ -8257,7 +8260,7 @@ def start_supervised_rank_async(data: Dict[str, Any], project_root: str) -> Supe
         try:
             from igris.core.mbop_runner import mbop_post_run, MBOPIntakeResult
             _intake = _mbop_intake if _mbop_intake is not None else MBOPIntakeResult(
-                issue_number=config.issue_number
+                issue_number=_mbop_issue_number
             )
             mbop_post_run(
                 run=run,

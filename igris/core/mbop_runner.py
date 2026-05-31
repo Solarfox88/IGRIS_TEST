@@ -612,7 +612,14 @@ def mbop_post_run(
         except Exception as exc:  # noqa: BLE001
             quality.error = str(exc)
 
-        qg_status = "pass" if quality.passed else "fail"
+        # Bug fix: distinguish real PASS (pytest ran+green) from vacuous PASS (pytest skipped).
+        # "warning" = passed structurally (no stubs) but pytest never ran — unverified.
+        if quality.passed and quality.pytest_ran:
+            qg_status = "pass"
+        elif quality.passed and not quality.pytest_ran:
+            qg_status = "warning"  # no stubs, but pytest skipped — unverified
+        else:
+            qg_status = "fail"
         qg_detail = (
             f"MBOP Phase 9 Quality Gate: {qg_status.upper()} | "
             f"pytest={'PASS' if quality.pytest_passed else ('FAIL' if quality.pytest_ran else 'skipped')} | "
@@ -659,7 +666,14 @@ def mbop_post_run(
         except Exception as exc:  # noqa: BLE001
             satisfaction.error = str(exc)
 
-        sg_status = "pass" if satisfaction.passed else "advisory"
+        # Bug fix: vacuous pass (no ACs extracted) stays "advisory", not "pass".
+        # Real "pass" requires ACs to have been extracted AND keyword-matched in diff.
+        if satisfaction.passed and satisfaction.criteria_checked:
+            sg_status = "pass"
+        elif satisfaction.passed and not satisfaction.criteria_checked:
+            sg_status = "advisory"  # no ACs to verify — not a real pass
+        else:
+            sg_status = "advisory"  # partial coverage — advisory only
         sg_detail = (
             f"MBOP Phase 10 Satisfaction Gate: {sg_status.upper()} | "
             f"{satisfaction.evidence} | missing={satisfaction.criteria_missing[:3]}"
@@ -697,6 +711,44 @@ def mbop_post_run(
         except Exception:  # noqa: BLE001
             pass
         _persist_event(project_root, run_id, issue_number, "mbop_phase11_post_task_eval", "done", eval_detail, eval_extra)
+
+        # ---- Write quality_scores.json record (Bug fix: was never written) ----
+        try:
+            import json as _json
+            _Path = Path  # alias already imported at module level
+            _time = time  # alias already imported at module level
+            _qs_path = _Path(project_root) / ".igris" / "quality_scores.json"
+            _qs_lock = _qs_path.with_suffix(".json.lock")
+            _existing: list = []
+            if _qs_path.exists():
+                try:
+                    _existing = _json.loads(_qs_path.read_text()) or []
+                    if not isinstance(_existing, list):
+                        _existing = []
+                except Exception:
+                    _existing = []
+            _existing.append({
+                "run_id": run_id,
+                "issue_number": issue_number,
+                "ts": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+                "ts_epoch": _time.time(),
+                "quality_gate": qg_status,
+                "satisfaction_gate": sg_status,
+                "pytest_ran": quality.pytest_ran,
+                "pytest_passed": quality.pytest_passed,
+                "stubs_found": quality.stub_patterns_found[:5],
+                "criteria_checked": len(satisfaction.criteria_checked),
+                "criteria_covered": len(satisfaction.criteria_covered),
+                "criteria_missing": len(satisfaction.criteria_missing),
+                "run_status": run_status,
+                "failure_class": failure_class,
+                "duration_seconds": round(duration, 1),
+                "lessons": eval_result.lessons[:3],
+            })
+            # Keep last 500 records
+            _qs_path.write_text(_json.dumps(_existing[-500:], indent=2))
+        except Exception:  # noqa: BLE001
+            pass  # never block
 
         # ---- Phase 12: Next-Step ----
         try:
