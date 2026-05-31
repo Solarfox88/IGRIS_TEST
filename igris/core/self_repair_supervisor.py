@@ -138,6 +138,85 @@ AUDIT_STATUSES = {
     "audit-false-positive",
 }
 
+# ---------------------------------------------------------------------------
+# Epic #1074 — Run-phase constants and state-machine enum
+# ---------------------------------------------------------------------------
+
+# Default timeouts (seconds) for various supervisor phases.
+DEFAULT_REPAIR_TIMEOUT_SECONDS = 300
+DEFAULT_BASELINE_TIMEOUT_SECONDS = 300
+DEFAULT_SMOKE_TIMEOUT_SECONDS = 60
+DEFAULT_PREFLIGHT_TIMEOUT_SECONDS = 60
+DEFAULT_PROVIDER_PING_TIMEOUT_SECONDS = 10
+
+# Maximum repair cycles per run (overridden by config.max_repair_cycles).
+DEFAULT_MAX_REPAIR_CYCLES = 2
+
+# Prefix for branch names created by the supervisor.
+SUPERVISOR_BRANCH_PREFIX = "rank-"
+
+# No-diff limit: how many consecutive reasoning attempts produce no diff before
+# we record a 'no_diff_repair' capability signal.
+NO_DIFF_SIGNAL_THRESHOLD = 3
+
+
+class RunPhase:
+    """Named constants for supervisor run phases.
+
+    These match the 'phase' field in SupervisorEvent and are used for
+    structured event emission, state transitions, and log filtering.
+
+    Phases follow the linear flow:
+      created → preflight → baseline_tests → reasoning →
+      diff_review → targeted_tests → full_tests → repair →
+      api_escalation → decomposition → delivery → terminal
+
+    Non-linear: 'repair' can re-enter 'reasoning'; 'decomposition' can
+    branch to sub-issue creation and child autorun.
+    """
+
+    # Pre-run setup
+    CREATED = "created"
+    PREFLIGHT = "preflight"
+    BASELINE_TESTS = "baseline_tests"
+
+    # Main reasoning loop
+    PLANNING = "planning"
+    REASONING = "reasoning"
+
+    # Post-reasoning validation
+    DIFF_REVIEW = "diff_review"
+    TARGETED_TESTS = "targeted_tests"
+    FULL_TESTS = "full_tests"
+    SMOKE = "smoke"
+    SEMANTIC_GATE = "semantic_gate"
+
+    # Recovery
+    REPAIR = "repair"
+    REPAIR_REASONING = "repair_reasoning"
+    API_ESCALATION = "api_escalation"
+
+    # Decomposition
+    DECOMPOSITION_REQUEST = "decomposition_request"
+    SUBISSUE_CREATION = "subissue_creation"
+    SUBMISSION_AUTORUN = "submission_autorun"
+
+    # Delivery
+    DELIVERY = "delivery"
+    PR_CREATION = "pr_creation"
+    MERGE = "merge"
+
+    # Terminal
+    COMPLETED = "completed"
+    BLOCKED = "blocked"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
+
+    # Meta
+    WATCHDOG = "watchdog"
+    BUDGET = "execution_budget"
+
 
 def _safe_text(value: Any) -> str:
     if value is None:
