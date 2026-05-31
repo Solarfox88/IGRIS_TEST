@@ -2569,6 +2569,46 @@ class SelfRepairSupervisor:
             return "helper_advice_then_gpt4o_execution", "strong_execution"
         return "helper_advice_then_mini_execution", "mini_execution"
 
+    def _quick_provider_check(self, timeout: int = 10) -> bool:
+        """Fast health-check: ping the configured LLM provider with a 10s timeout.
+
+        Returns True if at least one provider responds, False if all are
+        unreachable or timeout.  Used before repair_reasoning to avoid burning
+        the full repair budget on silent provider failures (#1059).
+        """
+        _log = logging.getLogger("igris.supervisor.provider_check")
+        helper_command = str(os.getenv("IGRIS_API_HELPER_COMMAND", "")).strip()
+        if not helper_command:
+            # No external helper configured — assume local model is available.
+            _log.debug("_quick_provider_check: no IGRIS_API_HELPER_COMMAND set, assuming available")
+            return True
+
+        # Build a minimal ping payload
+        ping_payload = {
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }
+        try:
+            import subprocess as _sp, json as _json
+            result = _sp.run(
+                helper_command.split(),
+                input=_json.dumps(ping_payload),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                _log.debug("_quick_provider_check: provider OK (returncode=0)")
+                return True
+            _log.warning(
+                "_quick_provider_check: provider returned rc=%d; stdout=%r",
+                result.returncode, result.stdout[:200],
+            )
+            return False
+        except Exception as exc:  # TimeoutExpired, FileNotFoundError, etc.
+            _log.warning("_quick_provider_check: provider ping failed: %s", exc)
+            return False
+
     @staticmethod
     def _check_execution_budget(run: SupervisorRun) -> Optional[str]:
         """Return failure_class string if execution budget is exceeded, else None."""
@@ -5483,6 +5523,20 @@ class SelfRepairSupervisor:
             has_execution_plan=has_execution_plan,
             same_failure_count=run.same_failure_count,
         )
+        # Fast provider health-check before burning repair budget (#1059).
+        # If all LLM providers are unavailable (silent timeouts), skip the repair
+        # cycle immediately rather than blocking for up to 900 s.
+        _provider_ok = self._quick_provider_check()
+        if not _provider_ok:
+            run.add(
+                "repair_reasoning",
+                "skipped",
+                "All LLM providers unavailable — skipping repair cycle to preserve budget",
+                failure_class=failure,
+                provider_check="failed",
+            )
+            return False
+
         # Strong models need extended repair timeout (same logic as main reasoning).
         _repair_timeout = config.reasoning_timeout_seconds
         _STRONG_PROFILES = {"strong_execution", "strong_cloud_reasoning", "gpu_reasoning"}
