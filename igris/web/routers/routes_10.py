@@ -56,6 +56,12 @@ from igris.a2a.agent_card import build_agent_card
 from igris.a2a import task_store as a2a_store
 
 
+def _safe_redact(value: object) -> str:
+    """Redact secrets from a string value (local helper for Epic #1077 endpoints)."""
+    from igris.core.safety import redact_secrets
+    return redact_secrets(str(value) if value is not None else "")
+
+
 def create_router(deps) -> APIRouter:
     """Router module 10/10 — _create_app_impl chunk 10."""
     router = APIRouter()
@@ -177,6 +183,233 @@ def create_router(deps) -> APIRouter:
         """Return compact supervisor audit summary."""
         from igris.core.self_repair_supervisor import get_supervisor_audit_summary
         return get_supervisor_audit_summary(project_root=str(CONFIG.project_root))
+
+    # ------------------------------------------------------------------
+    # Epic #1077 — Control Room UX: run status, risk cards, approve/block
+    # ------------------------------------------------------------------
+
+    @router.get("/api/rank/runs/{run_id}/status")
+    async def api_rank_run_status(run_id: str) -> Dict[str, object]:
+        """Rich run status API for the Control Room UI (Epic #1077).
+
+        Returns:
+            run_id, status, phase, failure_class, repair_cycles_used,
+            recent_events (last 10), risk_card, elapsed_seconds
+        """
+        import time as _time
+        from igris.core.self_repair_supervisor import get_supervised_run
+        run = get_supervised_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="rank run not found")
+
+        # Build a risk card from the run's current state
+        risk_card = {
+            "failure_class": run.failure_class or "none",
+            "repair_cycles_used": run.repair_cycles_used,
+            "same_failure_count": getattr(run, "same_failure_count", 0),
+            "execution_budget_used_usd": getattr(run, "execution_budget_used_usd", 0.0),
+            "capability_signals": dict(getattr(run, "capability_signals", {})),
+            "decomposition_pending": run.decomposition is not None,
+            "cancel_requested": run.cancel_requested,
+        }
+
+        # Determine current phase from latest event
+        current_phase = "unknown"
+        recent_events = []
+        if run.events:
+            current_phase = run.events[-1].phase if hasattr(run.events[-1], "phase") else "unknown"
+            recent_events = [
+                {
+                    "phase": e.phase if hasattr(e, "phase") else str(e.get("phase", "")),
+                    "status": e.status if hasattr(e, "status") else str(e.get("status", "")),
+                    "detail": (e.detail if hasattr(e, "detail") else str(e.get("detail", "")))[:200],
+                    "ts": e.ts if hasattr(e, "ts") else e.get("ts", 0),
+                }
+                for e in run.events[-10:]
+            ]
+
+        # Elapsed time
+        start_ts = getattr(run, "start_ts", None) or (
+            run.events[0].ts if run.events and hasattr(run.events[0], "ts") else 0
+        )
+        elapsed = round(_time.time() - start_ts, 1) if start_ts else None
+
+        return {
+            "run_id": run.run_id,
+            "rank_id": run.rank_id,
+            "status": run.status,
+            "phase": current_phase,
+            "failure_class": run.failure_class,
+            "goal": _safe_redact(run.goal) if run.goal else "",
+            "risk_card": risk_card,
+            "recent_events": recent_events,
+            "elapsed_seconds": elapsed,
+        }
+
+    @router.post("/api/rank/runs/{run_id}/approve")
+    async def api_rank_run_approve(run_id: str) -> Dict[str, object]:
+        """Approve a blocked/pending run to continue (Epic #1077).
+
+        Clears cancel_requested flag and updates status to 'running'.
+        For runs blocked on human approval.
+        """
+        from igris.core.self_repair_supervisor import get_supervised_run
+        run = get_supervised_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="rank run not found")
+        if run.status not in ("blocked", "running"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Run {run_id} is in status {run.status!r}; can only approve blocked/running runs",
+            )
+        run.cancel_requested = False
+        run.cancel_reason = ""
+        run.add("control_room", "approved", "Run approved via Control Room API")
+        return {"run_id": run_id, "status": run.status, "approved": True}
+
+    @router.post("/api/rank/runs/{run_id}/block")
+    async def api_rank_run_block(run_id: str, request: Request) -> Dict[str, object]:
+        """Block a running run immediately (Epic #1077).
+
+        Equivalent to cancel but marks the run as 'blocked' rather than 'cancelled'.
+        """
+        from igris.core.self_repair_supervisor import get_supervised_run
+        try:
+            raw = await request.body()
+            content = json.loads(raw) if raw else {}
+            if not isinstance(content, dict):
+                content = {}
+        except (json.JSONDecodeError, ValueError):
+            content = {}
+        reason = str(content.get("reason", "Blocked via Control Room API"))
+        run = get_supervised_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="rank run not found")
+        run.cancel_requested = True
+        run.cancel_reason = reason
+        run.add("control_room", "blocked", f"Run blocked via Control Room: {reason}")
+        return {"run_id": run_id, "status": "blocking", "reason": reason}
+
+    # ------------------------------------------------------------------
+    # Epic #1076 — DevOps/VPS operator: health check, deploy status, diagnostics
+    # ------------------------------------------------------------------
+
+    @router.get("/api/devops/health")
+    async def api_devops_health() -> Dict[str, object]:
+        """VPS health check — Epic #1076.
+
+        Returns CPU/memory/disk usage and service status.
+        Non-crashing: if a check fails, the error is recorded in the report.
+        """
+        import subprocess as _sp
+        import time as _time
+        checks: Dict[str, object] = {}
+
+        # Disk usage
+        try:
+            _du = _sp.run(["df", "-h", "/"], capture_output=True, text=True, timeout=5)
+            lines = _du.stdout.strip().splitlines()
+            if len(lines) >= 2:
+                parts = lines[1].split()
+                checks["disk"] = {
+                    "status": "ok",
+                    "size": parts[1] if len(parts) > 1 else "?",
+                    "used": parts[2] if len(parts) > 2 else "?",
+                    "available": parts[3] if len(parts) > 3 else "?",
+                    "use_pct": parts[4] if len(parts) > 4 else "?",
+                }
+        except Exception as exc:
+            checks["disk"] = {"status": "error", "error": str(exc)[:200]}
+
+        # Memory usage
+        try:
+            _mem = _sp.run(["free", "-h"], capture_output=True, text=True, timeout=5)
+            mem_lines = _mem.stdout.strip().splitlines()
+            if len(mem_lines) >= 2:
+                mem_parts = mem_lines[1].split()
+                checks["memory"] = {
+                    "status": "ok",
+                    "total": mem_parts[1] if len(mem_parts) > 1 else "?",
+                    "used": mem_parts[2] if len(mem_parts) > 2 else "?",
+                    "free": mem_parts[3] if len(mem_parts) > 3 else "?",
+                }
+        except Exception as exc:
+            checks["memory"] = {"status": "error", "error": str(exc)[:200]}
+
+        # IGRIS service (port 7778)
+        try:
+            _nc = _sp.run(
+                ["nc", "-z", "-w", "2", "localhost", "7778"],
+                capture_output=True, timeout=5,
+            )
+            checks["igris_service"] = {
+                "status": "ok" if _nc.returncode == 0 else "down",
+                "port": 7778,
+            }
+        except Exception as exc:
+            checks["igris_service"] = {"status": "error", "error": str(exc)[:200]}
+
+        overall = "healthy" if all(
+            c.get("status") == "ok" for c in checks.values() if isinstance(c, dict)
+        ) else "degraded"
+
+        return {"status": overall, "checks": checks, "timestamp": _time.time()}
+
+    @router.get("/api/devops/deploy-status")
+    async def api_devops_deploy_status() -> Dict[str, object]:
+        """Deploy status check — Epic #1076.
+
+        Returns the most recent git log, current branch, and dirty status.
+        """
+        import subprocess as _sp
+        result: Dict[str, object] = {}
+        try:
+            _branch = _sp.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+                cwd=str(CONFIG.project_root),
+            )
+            result["branch"] = _branch.stdout.strip() if _branch.returncode == 0 else "unknown"
+
+            _log_out = _sp.run(
+                ["git", "log", "--oneline", "-5"],
+                capture_output=True, text=True, timeout=5,
+                cwd=str(CONFIG.project_root),
+            )
+            result["recent_commits"] = _log_out.stdout.strip().splitlines() if _log_out.returncode == 0 else []
+
+            _status = _sp.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True, text=True, timeout=5,
+                cwd=str(CONFIG.project_root),
+            )
+            result["is_dirty"] = bool(_status.stdout.strip()) if _status.returncode == 0 else None
+        except Exception as exc:
+            result["error"] = str(exc)[:200]
+
+        return result
+
+    @router.get("/api/devops/diagnostics")
+    async def api_devops_diagnostics() -> Dict[str, object]:
+        """Nginx/systemd diagnostic — Epic #1076.
+
+        Returns systemd service status for igris and nginx (if available).
+        Best-effort: missing services return status=unknown.
+        """
+        import subprocess as _sp
+        services: Dict[str, object] = {}
+        for svc in ("igris", "nginx"):
+            try:
+                _svc = _sp.run(
+                    ["systemctl", "is-active", svc],
+                    capture_output=True, text=True, timeout=5,
+                )
+                status = _svc.stdout.strip() or "unknown"
+                services[svc] = {"status": status}
+            except Exception as exc:
+                services[svc] = {"status": "unknown", "error": str(exc)[:100]}
+
+        return {"services": services}
 
     # ------------------------------------------------------------------
     # Integration Layer — Epic #62
