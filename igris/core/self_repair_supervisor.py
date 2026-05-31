@@ -7241,6 +7241,18 @@ class SelfRepairSupervisor:
         except Exception:
             pass  # Dedup is best-effort; if it fails, allow creation to proceed
 
+        # Epic #1078 — Enforce max sub-issue count to prevent noisy decompositions.
+        _MAX_SUBISSUES = int(os.getenv("IGRIS_MAX_SUBISSUES_PER_DECOMPOSITION", "12"))
+        if len(sub_missions) > _MAX_SUBISSUES:
+            run.add(
+                "subissue_creation",
+                "capped",
+                f"Decomposition produced {len(sub_missions)} sub-missions; capping at {_MAX_SUBISSUES}.",
+                original_count=len(sub_missions),
+                cap=_MAX_SUBISSUES,
+            )
+            sub_missions = sub_missions[:_MAX_SUBISSUES]
+
         for i, sub in enumerate(sub_missions):
             title = _safe_redact(str(sub.get("title", f"Sub-task {i+1}")))
             goal_text = _safe_redact(str(sub.get("goal", "")))
@@ -7249,6 +7261,72 @@ class SelfRepairSupervisor:
             tests = sub.get("tests") or []
             criteria = sub.get("acceptance_criteria") or []
             deps = sub.get("dependencies") or []
+
+            # Epic #1078 — Title hygiene: reject vague or auto-generated titles.
+            _title_rejected = False
+            _title_lower = title.lower().strip()
+            if (
+                not _title_lower
+                or len(_title_lower) < 5
+                or _title_lower.startswith("implement github issue #")
+                or "igris/**" in _title_lower
+                or _title_lower.startswith("sub-task ")
+                or _title_lower.startswith("sub_task ")
+            ):
+                _clean_title = f"{config.rank_id}: fix sub-task {i+1} from decomposition"
+                run.add(
+                    "subissue_title_hygiene",
+                    "normalized",
+                    f"Vague title normalized: {title!r} → {_clean_title!r}",
+                    index=i + 1,
+                    original_title=title,
+                    normalized_title=_clean_title,
+                )
+                title = _clean_title
+
+            # Epic #1078 — AC validation: generate minimal ACs when missing or vague.
+            _VAGUE_AC_MARKERS = {"_not specified_", "not specified", "tbd", "todo", "n/a", ""}
+            _valid_criteria = [
+                c for c in criteria
+                if str(c).strip().lower() not in _VAGUE_AC_MARKERS and len(str(c).strip()) > 10
+            ]
+            if len(_valid_criteria) < 3:
+                # Generate deterministic acceptance criteria from goal and tests
+                _generated_acs = []
+                if goal_text:
+                    _generated_acs.append(f"Implementation matches goal: {goal_text[:120]}")
+                if tests:
+                    _generated_acs.append(f"All test targets pass: {', '.join(str(t) for t in tests[:3])}")
+                else:
+                    _generated_acs.append("pytest passes with no regressions on the full test suite")
+                _generated_acs.append("No new lint errors introduced; changed files are importable")
+                _generated_acs.append("PR diff is minimal and scoped to the stated file targets")
+                _generated_acs += list(_valid_criteria)  # keep any valid ones the model produced
+                criteria = _generated_acs
+                run.add(
+                    "subissue_ac_generated",
+                    "auto_generated",
+                    f"Sub-mission {i+1}: generated {len(_generated_acs)} ACs (had {len(_valid_criteria)} valid).",
+                    index=i + 1,
+                    title=title,
+                    ac_count=len(_generated_acs),
+                )
+
+            # Epic #1078 — Goal-hash dedup: also check normalized goal text, not just title.
+            import hashlib as _hashlib
+            _goal_hash = _hashlib.md5(goal_text.lower().strip().encode()).hexdigest()[:8]
+            _goal_hash_key = f"__goal_hash:{_goal_hash}"
+            if _goal_hash_key in existing_open_titles:
+                run.add(
+                    "subissue_dedup",
+                    "skipped",
+                    f"Sub-mission {i+1} has duplicate goal hash ({_goal_hash}): {title}",
+                    index=i + 1,
+                    title=title,
+                    reason="dedup:goal_hash_match",
+                )
+                continue
+            existing_open_titles.add(_goal_hash_key)
 
             # Dedup: skip sub-mission if an open issue with same title already exists
             if title.lower().strip() in existing_open_titles:
