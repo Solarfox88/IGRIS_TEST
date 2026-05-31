@@ -74,6 +74,20 @@ class ValidationIssue:
     original: Any = None
     fixed: Any = None
 
+    @property
+    def code(self) -> str:
+        """Short uppercase code derived from field name (e.g. 'TITLE', 'AC', 'DEDUP')."""
+        _alias = {
+            "acceptance_criteria": "AC",
+            "goal_hash": "DEDUP",
+            "goal": "GOAL",
+            "title": "TITLE",
+            "dependencies": "DEPS",
+            "count": "CAP",
+            "risk_level": "RISK",
+        }
+        return _alias.get(self.field, self.field.upper().replace("_", ""))
+
 
 @dataclass
 class SubMission:
@@ -120,6 +134,23 @@ class ValidationReport:
     def ok(self) -> bool:
         """True if validation produced at least one accepted sub-mission."""
         return len(self.accepted) > 0
+
+    @property
+    def valid(self) -> bool:
+        """True when no error-severity issues were raised (warnings/fixed are allowed)."""
+        return self.error_count == 0 and self.ok
+
+    @property
+    def quality_score(self) -> float:
+        """Normalised 0–1 quality score.
+
+        Starts at 1.0 and is penalised:
+          - 0.15 per error-severity issue (hard problems)
+          - 0.05 per warning-severity issue (soft problems)
+        Floored at 0.0.
+        """
+        penalty = self.error_count * 0.15 + self.warning_count * 0.05
+        return max(0.0, 1.0 - penalty)
 
     @property
     def error_count(self) -> int:

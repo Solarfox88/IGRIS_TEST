@@ -13,6 +13,12 @@ _log = logging.getLogger("igris.delivery")
 # Epic #1071 — Stale branch age threshold in seconds (default: 14 days)
 STALE_BRANCH_AGE_SECONDS = int(14 * 24 * 3600)
 
+# Epic #1071 — CIRepairLoop import (top-level so it is patchable in tests)
+try:
+    from igris.core.ci_repair_loop import CIRepairLoop  # noqa: F401
+except ImportError:
+    CIRepairLoop = None  # type: ignore[assignment,misc]
+
 
 @dataclass
 class CIStatus:
@@ -36,9 +42,18 @@ class BranchHygieneReport:
 
 
 class DeliveryWorkflow:
-    def __init__(self, project_root: str) -> None:
+    def __init__(
+        self,
+        project_root: str,
+        backend: Optional[Any] = None,
+        goal: str = "",
+    ) -> None:
         self.project_root = project_root
         self._fix_attempts: Dict[str, int] = {}
+        # Epic #1071 — optional backend for LLM-guided CI repair
+        self._backend = backend      # must have run_reasoning() if provided
+        self._goal = goal            # original mission goal (for CI repair context)
+        self._current_pr: Optional[int] = None  # set by fix_ci_loop
 
     def create_mission_branch(self, mission_id: str) -> str:
         branch = f"igris/mission-{mission_id[:8]}"
@@ -79,6 +94,7 @@ class DeliveryWorkflow:
         return CIStatus("timeout", [], "")
 
     def fix_ci_loop(self, pr_number: int, max_attempts: int = 3) -> bool:
+        self._current_pr = pr_number  # Epic #1071 — expose to _apply_ci_fix
         for attempt in range(max_attempts):
             ci = self.wait_for_ci(pr_number)
             if ci.status == "green":
@@ -167,9 +183,47 @@ class DeliveryWorkflow:
             subprocess.run(["git", "add", "-u"], cwd=self.project_root, capture_output=True)
             return result.returncode == 0
         if failure_type == "test_failure":
+            # Epic #1071 — CIRepairLoop: LLM-guided repair for test failures.
+            # When a backend with run_reasoning() is available, delegate to CIRepairLoop
+            # which fetches CI logs, builds a targeted repair goal, and runs up to
+            # max_attempts LLM repair cycles.
+            if self._backend is not None and CIRepairLoop is not None:
+                try:
+                    pr_number = self._current_pr or 0
+                    repair_loop = CIRepairLoop(
+                        project_root=self.project_root,
+                        pr_number=pr_number,
+                        original_goal=self._goal,
+                        max_attempts=2,
+                    )
+                    ci_result = repair_loop.run(self._backend)
+                    _log.info(
+                        "CIRepairLoop finished: resolved=%s attempts=%d duration=%.1fs",
+                        ci_result.resolved, ci_result.attempt_count, ci_result.total_duration_seconds,
+                    )
+                    # Record lesson regardless of outcome
+                    try:
+                        from igris.core.memory_graph import MemoryGraph
+                        MemoryGraph(self.project_root).add_node(
+                            "lesson",
+                            {
+                                "event_type": "ci_repair_loop_result",
+                                "resolved": ci_result.resolved,
+                                "attempts": ci_result.attempt_count,
+                                "failure_summary": ci_result.failure_summary[:500],
+                                "log_excerpt": str(diagnosis.get("log_excerpt", ""))[:500],
+                                "failed_jobs": diagnosis.get("failed_jobs", []),
+                            },
+                            confidence=0.8 if ci_result.resolved else 0.5,
+                        )
+                    except Exception:
+                        pass
+                    return ci_result.resolved
+                except Exception as exc:
+                    _log.warning("CIRepairLoop: failed to run: %s — falling back", exc)
+            # Fallback: log lesson only (original behavior when no backend)
             try:
                 from igris.core.memory_graph import MemoryGraph
-
                 MemoryGraph(self.project_root).add_node(
                     "lesson",
                     {

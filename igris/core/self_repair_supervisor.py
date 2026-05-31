@@ -5662,6 +5662,55 @@ class SelfRepairSupervisor:
         env_profile = os.environ.get("IGRIS_EXECUTION_PREFERRED_PROFILE", "")
         if env_profile and not strategy_profile:
             repair_profile = env_profile
+        # Epic #1074 — Wire decide_repair_strategy() for explicit, auditable strategy.
+        # The strategy module makes the same decision as the inline logic above but
+        # in a pure, testable function. We use it here to:
+        #   (a) emit a structured 'repair_strategy_decision' event for audit
+        #   (b) early-exit with skip_repair=True when the strategy says so
+        #   (c) prepend strategy.goal_prefix to the repair_goal for context
+        try:
+            from igris.core.repair_strategy import RepairContext, decide_repair_strategy
+            _rs_ctx = RepairContext(
+                failure_class=failure,
+                cycle=cycle,
+                same_failure_count=int(run.same_failure_count or 0),
+                max_repair_cycles=int(config.max_repair_cycles or 3),
+                base_timeout_seconds=int(config.reasoning_timeout_seconds or 900),
+                has_high_risk_advice=high_risk_advice,
+                has_execution_plan=has_execution_plan,
+                capability_signals=dict(run.capability_signals or {}),
+            )
+            _rs = decide_repair_strategy(_rs_ctx)
+            run.add(
+                "repair_strategy_decision",
+                "skip" if _rs.skip_repair else "proceed",
+                (
+                    f"strategy: task_type={_rs.task_type} profile={_rs.profile!r} "
+                    f"timeout={_rs.timeout_seconds}s skip={_rs.skip_repair}"
+                    + (f" reason={_rs.skip_reason}" if _rs.skip_repair else "")
+                    + (f" escalate_decompose={_rs.escalate_to_decomposition}" if _rs.escalate_to_decomposition else "")
+                ),
+                task_type=_rs.task_type,
+                profile=_rs.profile,
+                timeout_seconds=_rs.timeout_seconds,
+                skip_repair=_rs.skip_repair,
+                skip_reason=_rs.skip_reason,
+                escalate_to_decomposition=_rs.escalate_to_decomposition,
+                same_failure_count=int(run.same_failure_count or 0),
+                notes=_rs.notes,
+            )
+            if _rs.skip_repair:
+                return False
+            # Prepend goal_prefix for additional context (does not override full goal logic above)
+            if _rs.goal_prefix and not repair_goal.startswith(_rs.goal_prefix):
+                repair_goal = f"{_rs.goal_prefix} {repair_goal}"
+        except Exception as _rs_exc:
+            run.add(
+                "repair_strategy_decision",
+                "skipped",
+                f"decide_repair_strategy unavailable: {_rs_exc}",
+            )
+
         run.add(
             "repair_reasoning",
             "running",
@@ -6782,6 +6831,45 @@ class SelfRepairSupervisor:
             generated_by=decomposition.get("generated_by", "unknown"),
         )
         run.decomposition = decomposition
+
+        # Epic #1078 — DecompositionValidator quality gate.
+        # Validate sub_missions structure and log a quality score so the operator
+        # can identify noisy / low-quality decompositions in the audit trail.
+        _sub_missions_raw = decomposition.get("sub_missions") or []
+        if _sub_missions_raw:
+            try:
+                from igris.core.decomposition_validator import DecompositionValidator
+                _val_report = DecompositionValidator().validate(_sub_missions_raw)
+                run.add(
+                    "decomposition_quality",
+                    "ok" if _val_report.valid else "warning",
+                    (
+                        f"DecompositionValidator: valid={_val_report.valid} "
+                        f"score={_val_report.quality_score:.2f} "
+                        f"issues={len(_val_report.issues)}"
+                        + (
+                            " — " + "; ".join(i.message for i in _val_report.issues[:3])
+                            if _val_report.issues else ""
+                        )
+                    ),
+                    quality_score=round(_val_report.quality_score, 3),
+                    valid=_val_report.valid,
+                    issue_count=len(_val_report.issues),
+                    issue_codes=[i.code for i in _val_report.issues],
+                )
+                decomposition["_quality_score"] = round(_val_report.quality_score, 3)
+                decomposition["_quality_valid"] = _val_report.valid
+                decomposition["_quality_issues"] = [
+                    {"code": i.code, "message": i.message, "index": i.index}
+                    for i in _val_report.issues
+                ]
+            except Exception as _val_exc:
+                run.add(
+                    "decomposition_quality",
+                    "skipped",
+                    f"DecompositionValidator unavailable: {_val_exc}",
+                )
+
         return decomposition
 
     def _api_helper_decompose(
@@ -7367,6 +7455,38 @@ class SelfRepairSupervisor:
         except Exception:
             pass  # Label propagation is best-effort
 
+        # Epic #1075 — Dependency-order scheduling: build execution waves and log
+        # the wave structure so the autochain can respect creation order.
+        try:
+            from igris.core.parallel_task_runner import ParallelTask, build_dependency_order
+            _dep_tasks = [
+                ParallelTask(
+                    task_id=str(sub.get("title", f"sub_{j}")),
+                    goal=str(sub.get("goal", "")),
+                    depends_on=list(sub.get("dependencies") or []),
+                    initial_context={"file_scopes": sub.get("allowed_file_scopes") or []},
+                )
+                for j, sub in enumerate(sub_missions)
+            ]
+            _waves = build_dependency_order(_dep_tasks)
+            _wave_summary = [
+                {"wave": w, "tasks": [t.task_id for t in wave]}
+                for w, wave in enumerate(_waves)
+            ]
+            run.add(
+                "subissue_dependency_order",
+                "computed",
+                f"Dependency waves: {len(_waves)} wave(s) for {len(sub_missions)} sub-mission(s)",
+                wave_count=len(_waves),
+                waves=_wave_summary,
+            )
+        except Exception as _dep_exc:
+            run.add(
+                "subissue_dependency_order",
+                "skipped",
+                f"build_dependency_order unavailable: {_dep_exc}",
+            )
+
         created_urls: List[str] = []
         run.add(
             "subissue_creation",
@@ -7404,6 +7524,39 @@ class SelfRepairSupervisor:
                 cap=_MAX_SUBISSUES,
             )
             sub_missions = sub_missions[:_MAX_SUBISSUES]
+
+        # Epic #1078 — File scope overlap detection.
+        # Build ParallelTask-like dicts from sub_missions so we can detect which
+        # files would be touched by multiple concurrent sub-issues, and log
+        # conflicts so the operator can add explicit serialisation (depends_on).
+        try:
+            from igris.core.parallel_task_runner import ParallelTask, detect_file_conflicts
+            _ptasks = [
+                ParallelTask(
+                    task_id=str(sub.get("title", f"sub_{j}")),
+                    goal=str(sub.get("goal", "")),
+                    initial_context={"file_scopes": sub.get("allowed_file_scopes") or []},
+                    depends_on=list(sub.get("dependencies") or []),
+                )
+                for j, sub in enumerate(sub_missions)
+            ]
+            _scope_conflicts = detect_file_conflicts(_ptasks)
+            if _scope_conflicts:
+                run.add(
+                    "subissue_scope_conflict",
+                    "warning",
+                    f"File scope overlap detected across {len(_scope_conflicts)} file(s): "
+                    + "; ".join(
+                        f"{f} → {ids}" for f, ids in list(_scope_conflicts.items())[:5]
+                    ),
+                    conflicts=_scope_conflicts,
+                )
+        except Exception as _sc_exc:
+            run.add(
+                "subissue_scope_conflict",
+                "skipped",
+                f"Scope conflict detection unavailable: {_sc_exc}",
+            )
 
         for i, sub in enumerate(sub_missions):
             title = _safe_redact(str(sub.get("title", f"Sub-task {i+1}")))
@@ -7818,9 +7971,21 @@ class SelfRepairSupervisor:
         sub_goals: List[str],
         base_max_steps: int = 20,
         preferred_profile: Optional[str] = None,
+        depends_on_map: Optional[Dict[str, List[str]]] = None,
     ) -> List[dict]:
-        """Run decomposed sub-goals in parallel and return run_reasoning-like dicts."""
-        from igris.core.parallel_task_runner import ParallelTask, ParallelTaskRunner
+        """Run decomposed sub-goals in parallel, respecting dependency order (Epic #1075).
+
+        Args:
+            sub_goals: list of goal strings
+            base_max_steps: max steps per task
+            preferred_profile: LLM profile for all tasks
+            depends_on_map: optional dict mapping task_id → list[task_id] it depends on.
+                            When provided, tasks are executed in topological order (waves).
+        """
+        from igris.core.parallel_task_runner import (
+            ParallelTask, ParallelTaskRunner, build_dependency_order,
+            detect_file_conflicts, merge_results,
+        )
 
         tasks = [
             ParallelTask(
@@ -7828,15 +7993,99 @@ class SelfRepairSupervisor:
                 goal=goal,
                 max_steps=base_max_steps,
                 preferred_profile=preferred_profile,
+                depends_on=(depends_on_map or {}).get(f"sub_{i}", []),
             )
             for i, goal in enumerate(sub_goals)
         ]
+
+        # Epic #1075 — pre-run conflict detection
+        conflicts = detect_file_conflicts(tasks)
+        if conflicts:
+            _logger = logging.getLogger("igris.supervisor.parallel")
+            _logger.warning(
+                "parallel_submissions: file-scope conflicts detected in %d file(s): %s",
+                len(conflicts), list(conflicts.keys())[:5],
+            )
+
         runner = ParallelTaskRunner(self.project_root, max_concurrent=3)
         parallel_results = runner.run_sync(tasks)
+
         return [
             pr.result.to_dict() if pr.result is not None else {"status": "error", "error": pr.error}
             for pr in parallel_results
         ]
+
+    def run_parallel_submissions(
+        self,
+        sub_missions: List[Dict[str, Any]],
+        max_steps: int = 20,
+        preferred_profile: Optional[str] = None,
+        max_concurrent: int = 3,
+    ) -> Dict[str, Any]:
+        """Public API: run sub-missions as parallel AgentReasoningLoop tasks (Epic #1075).
+
+        Sub-missions are executed in dependency order (waves). Conflicts are
+        detected and logged before execution. Results are merged into a summary.
+
+        Args:
+            sub_missions: list of dicts with 'title', 'goal', 'dependencies',
+                          'allowed_file_scopes' keys (same format as decomposition output)
+            max_steps: max reasoning steps per task
+            preferred_profile: LLM profile override
+            max_concurrent: max tasks running simultaneously
+
+        Returns:
+            merge_results() summary dict with total, succeeded, failed, skipped,
+            merged_files, all_success + waves structure.
+        """
+        from igris.core.parallel_task_runner import (
+            ParallelTask, ParallelTaskRunner,
+            build_dependency_order, detect_file_conflicts, merge_results,
+        )
+
+        tasks = [
+            ParallelTask(
+                task_id=str(sub.get("title", f"sub_{i}")),
+                goal=str(sub.get("goal", "")),
+                max_steps=max_steps,
+                preferred_profile=preferred_profile,
+                depends_on=list(sub.get("dependencies") or []),
+                initial_context={
+                    "file_scopes": sub.get("allowed_file_scopes") or [],
+                    "acceptance_criteria": sub.get("acceptance_criteria") or [],
+                    "risk_level": sub.get("risk_level", "medium"),
+                },
+            )
+            for i, sub in enumerate(sub_missions)
+        ]
+
+        # Pre-run checks
+        conflicts = detect_file_conflicts(tasks)
+        waves = build_dependency_order(tasks)
+
+        _logger = logging.getLogger("igris.supervisor.parallel")
+        _logger.info(
+            "run_parallel_submissions: %d tasks in %d wave(s), %d file conflict(s)",
+            len(tasks), len(waves), len(conflicts),
+        )
+
+        if conflicts:
+            _logger.warning(
+                "run_parallel_submissions: conflicts on %s — "
+                "consider adding depends_on to serialise",
+                list(conflicts.keys())[:5],
+            )
+
+        runner = ParallelTaskRunner(self.project_root, max_concurrent=max_concurrent)
+        parallel_results = runner.run_sync(tasks)
+
+        summary = merge_results(parallel_results)
+        summary["waves"] = [
+            {"wave": w, "tasks": [t.task_id for t in wave]}
+            for w, wave in enumerate(waves)
+        ]
+        summary["conflicts"] = conflicts
+        return summary
 
     def _blocked_decomposition_required(
         self,

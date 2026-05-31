@@ -116,7 +116,25 @@ CREATE INDEX IF NOT EXISTS idx_edges_dst  ON memory_edges(dst_node);
         tags: list,
         created_at: float,
     ) -> None:
-        """Write new node to ContentStore and compute its score (best-effort, never raises)."""
+        """Write new node to ContentStore and compute its score (best-effort, never raises).
+
+        Epic #1073: guarded by MemoryCircuitBreaker so repeated ContentStore/Scorer
+        failures disable writes after DEFAULT_OPEN_THRESHOLD consecutive errors and
+        auto-recover after DEFAULT_RECOVERY_WINDOW seconds.
+        """
+        # Epic #1073 — Circuit breaker guard: skip write when breaker is OPEN.
+        try:
+            from igris.core.memory_circuit_breaker import MemoryCircuitBreaker
+            _breaker = MemoryCircuitBreaker.get("memory_tree")
+            if not _breaker.allow():
+                _log.debug(
+                    "MemoryGraph._tree_write: circuit breaker OPEN for 'memory_tree' — "
+                    "skipping ContentStore/Scorer write for node %s", node_id,
+                )
+                return
+        except Exception:
+            _breaker = None  # breaker unavailable — proceed without guard
+
         try:
             from igris.core.memory_content_store import ContentStore
             from igris.core.memory_scorer import MemoryScorer
@@ -139,6 +157,9 @@ CREATE INDEX IF NOT EXISTS idx_edges_dst  ON memory_edges(dst_node);
                 content=text,
                 created_at=created_at,
             )
+            # Write succeeded — tell the breaker so it can close from half-open.
+            if _breaker is not None:
+                _breaker.record_success()
         except Exception as exc:
             # Epic #1073 — non-silent failure: log warning so memory tree failures
             # are observable (they previously swallowed all errors silently).
@@ -148,6 +169,8 @@ CREATE INDEX IF NOT EXISTS idx_edges_dst  ON memory_edges(dst_node);
                 "(type=%s): %s — memory tree entry skipped",
                 node_id, node_type, exc,
             )
+            if _breaker is not None:
+                _breaker.record_failure(exc)
 
     def add_edge(self, src_node, dst_node, edge_type, weight=1.0) -> str:
         if edge_type not in EDGE_TYPES:
@@ -506,3 +529,72 @@ CREATE INDEX IF NOT EXISTS idx_edges_dst  ON memory_edges(dst_node);
             return store.upsert(node_id=node_id, node_type=node_type, text=text)
         except Exception:
             return False
+
+    # ------------------------------------------------------------------
+    # Epic #1073 — memory health-check
+    # ------------------------------------------------------------------
+
+    def memory_healthcheck(self) -> Dict[str, Any]:
+        """Return a health report for this MemoryGraph instance.
+
+        Checks:
+          - SQLite DB accessibility (can read node count)
+          - Circuit breaker state for the 'memory_tree' subsystem
+          - ContentStore/Scorer availability (best-effort import check)
+          - Node count by type
+
+        Returns a dict with keys:
+          db_ok (bool), node_count (int), node_counts_by_type (dict),
+          circuit_breaker_state (str), content_store_available (bool),
+          scorer_available (bool), errors (list[str])
+        """
+        errors: List[str] = []
+        report: Dict[str, Any] = {
+            "db_ok": False,
+            "node_count": 0,
+            "node_counts_by_type": {},
+            "circuit_breaker_state": "unknown",
+            "content_store_available": False,
+            "scorer_available": False,
+            "errors": errors,
+        }
+
+        # 1. SQLite DB check
+        try:
+            rows = self.conn.execute(
+                "SELECT node_type, COUNT(*) as cnt FROM memory_nodes GROUP BY node_type"
+            ).fetchall()
+            counts: Dict[str, int] = {}
+            total = 0
+            for row in rows:
+                counts[row["node_type"]] = row["cnt"]
+                total += row["cnt"]
+            report["db_ok"] = True
+            report["node_count"] = total
+            report["node_counts_by_type"] = counts
+        except Exception as exc:
+            errors.append(f"db_read_error: {exc}")
+
+        # 2. Circuit breaker state
+        try:
+            from igris.core.memory_circuit_breaker import MemoryCircuitBreaker
+            breaker = MemoryCircuitBreaker.get("memory_tree")
+            report["circuit_breaker_state"] = breaker.state
+        except Exception as exc:
+            errors.append(f"circuit_breaker_error: {exc}")
+
+        # 3. ContentStore availability
+        try:
+            from igris.core.memory_content_store import ContentStore  # noqa: F401
+            report["content_store_available"] = True
+        except Exception:
+            report["content_store_available"] = False
+
+        # 4. MemoryScorer availability
+        try:
+            from igris.core.memory_scorer import MemoryScorer  # noqa: F401
+            report["scorer_available"] = True
+        except Exception:
+            report["scorer_available"] = False
+
+        return report

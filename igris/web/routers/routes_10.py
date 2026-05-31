@@ -378,6 +378,194 @@ def create_router(deps) -> APIRouter:
         }
 
     # ------------------------------------------------------------------
+    # Epic #1077 — Control Room: timeline, risk-detail, final report
+    # ------------------------------------------------------------------
+
+    @router.get("/api/rank/runs/{run_id}/timeline")
+    async def api_rank_run_timeline(run_id: str) -> Dict[str, object]:
+        """Full event timeline for a run, grouped by phase (Epic #1077).
+
+        Returns:
+            timeline: list of phase groups, each with phase name, events, and
+                      aggregate status (success/failure/running/skipped).
+            total_events: total number of events
+            phases_seen: list of unique phases in order
+        """
+        from igris.core.self_repair_supervisor import get_supervised_run
+        import time as _time
+        run = get_supervised_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="rank run not found")
+
+        # Group events by phase
+        phase_groups: Dict[str, Dict[str, object]] = {}
+        phases_order: list = []
+        for ev in (run.events or []):
+            phase = getattr(ev, "phase", None) or (ev.get("phase", "unknown") if isinstance(ev, dict) else "unknown")
+            status = getattr(ev, "status", None) or (ev.get("status", "") if isinstance(ev, dict) else "")
+            detail = getattr(ev, "detail", None) or (ev.get("detail", "") if isinstance(ev, dict) else "")
+            ts = getattr(ev, "ts", None) or (ev.get("ts", 0) if isinstance(ev, dict) else 0)
+            if phase not in phase_groups:
+                phase_groups[phase] = {"phase": phase, "events": [], "final_status": status, "started_ts": ts}
+                phases_order.append(phase)
+            entry = {"status": status, "detail": str(detail)[:300], "ts": ts}
+            phase_groups[phase]["events"].append(entry)  # type: ignore[index]
+            # Update final status to the last seen status for this phase
+            if status:
+                phase_groups[phase]["final_status"] = status
+
+        timeline = [phase_groups[p] for p in phases_order]
+
+        # Compute duration per phase
+        for group in timeline:
+            evs = group["events"]
+            if len(evs) >= 2:
+                first_ts = evs[0].get("ts") or 0
+                last_ts = evs[-1].get("ts") or 0
+                group["duration_seconds"] = round(float(last_ts) - float(first_ts), 1) if last_ts and first_ts else None
+
+        return {
+            "run_id": run_id,
+            "status": run.status,
+            "timeline": timeline,
+            "total_events": len(run.events or []),
+            "phases_seen": phases_order,
+        }
+
+    @router.get("/api/rank/runs/{run_id}/risk-detail")
+    async def api_rank_run_risk_detail(run_id: str) -> Dict[str, object]:
+        """Full risk detail card for a run (Epic #1077).
+
+        Returns:
+            failure_history: list of all failure events in order
+            repair_attempts: list of repair cycle events
+            capability_signals: dict of capability limit signals
+            risk_trajectory: simplified risk level per phase
+            budget_used_usd: total execution budget consumed
+            decomposition_info: decomposition quality and wave structure (if applicable)
+        """
+        from igris.core.self_repair_supervisor import get_supervised_run
+        run = get_supervised_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="rank run not found")
+
+        # Extract failure history
+        failure_history = []
+        repair_attempts = []
+        risk_trajectory = []
+        for ev in (run.events or []):
+            phase = getattr(ev, "phase", None) or (ev.get("phase", "") if isinstance(ev, dict) else "")
+            status = getattr(ev, "status", None) or (ev.get("status", "") if isinstance(ev, dict) else "")
+            detail = getattr(ev, "detail", None) or (ev.get("detail", "") if isinstance(ev, dict) else "")
+            ts = getattr(ev, "ts", 0) or (ev.get("ts", 0) if isinstance(ev, dict) else 0)
+            if phase == "failure":
+                failure_history.append({"failure_class": str(detail)[:100], "ts": ts})
+            if phase == "repair_reasoning":
+                repair_attempts.append({
+                    "status": status,
+                    "detail": str(detail)[:200],
+                    "ts": ts,
+                    "same_failure_count": ev.same_failure_count if hasattr(ev, "same_failure_count") else None,
+                })
+            # Risk trajectory: phase → success/failure
+            if status in ("success", "failure", "blocked", "running"):
+                risk_trajectory.append({"phase": phase, "status": status, "ts": ts})
+
+        return {
+            "run_id": run_id,
+            "failure_class": run.failure_class or "none",
+            "repair_cycles_used": run.repair_cycles_used,
+            "same_failure_count": getattr(run, "same_failure_count", 0),
+            "capability_signals": dict(getattr(run, "capability_signals", {})),
+            "failure_history": failure_history,
+            "repair_attempts": repair_attempts,
+            "risk_trajectory": risk_trajectory[-20:],  # last 20 phase transitions
+            "budget_used_usd": round(getattr(run, "execution_budget_used_usd", 0.0), 6),
+            "decomposition_info": {
+                "pending": run.decomposition is not None,
+                "quality_score": (run.decomposition or {}).get("_quality_score"),
+                "quality_valid": (run.decomposition or {}).get("_quality_valid"),
+            } if run.decomposition else {"pending": False},
+        }
+
+    @router.get("/api/rank/runs/{run_id}/report")
+    async def api_rank_run_report(run_id: str) -> Dict[str, object]:
+        """Structured final report for a completed or blocked run (Epic #1077).
+
+        Returns:
+            A human-readable + machine-parsable summary of the run outcome:
+            - outcome: 'success' | 'blocked' | 'decomposition_required' | 'cancelled' | 'in_progress'
+            - goal: the original mission goal
+            - failure_class: for blocked runs, the failure classification
+            - acceptance_evidence: semantic gate result (if run)
+            - decomposition: decomposition info (if decomposition_required)
+            - key_metrics: repair_cycles, budget, elapsed, event_count
+            - recommendations: list of actionable next steps
+        """
+        from igris.core.self_repair_supervisor import get_supervised_run
+        import time as _time
+        run = get_supervised_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="rank run not found")
+
+        # Determine outcome
+        status = run.status or "unknown"
+        if status in ("success", "completed", "noop"):
+            outcome = "success"
+        elif status in ("cancelled", "cancelling"):
+            outcome = "cancelled"
+        elif status == "running":
+            outcome = "in_progress"
+        elif run.failure_class == "decomposition_required":
+            outcome = "decomposition_required"
+        else:
+            outcome = "blocked"
+
+        # Recommendations based on outcome
+        recommendations: list = []
+        if outcome == "decomposition_required":
+            recommendations.append("Review the decomposition and approve sub-missions via /api/rank/runs/{run_id}/approve")
+            recommendations.append("Check sub-mission dependency order via /api/rank/runs/{run_id}/timeline")
+        elif outcome == "blocked":
+            fc = run.failure_class or "unknown"
+            if fc in ("pytest_failure", "missing_tests"):
+                recommendations.append(f"Repair cycle failed on {fc}; review repair attempts via /api/rank/runs/{run_id}/risk-detail")
+            elif fc == "capability_ceiling_reached":
+                recommendations.append("Mission exceeds model capability; consider manual decomposition into smaller tasks")
+            elif fc == "workspace_dirty":
+                recommendations.append("Clean the workspace (git reset --hard or git stash) and retry")
+        elif outcome == "success":
+            recommendations.append("Review evidence via /api/rank/runs/{run_id}/evidence before closing the GitHub issue")
+
+        # Elapsed
+        start_ts = getattr(run, "start_ts", None)
+        if not start_ts and run.events:
+            start_ts = getattr(run.events[0], "ts", None)
+        elapsed = round(_time.time() - float(start_ts), 1) if start_ts else None
+
+        return {
+            "run_id": run_id,
+            "outcome": outcome,
+            "status": status,
+            "goal": _safe_redact(run.goal) if run.goal else "",
+            "failure_class": run.failure_class or "none",
+            "acceptance_evidence": getattr(run, "acceptance_evidence", None),
+            "decomposition": {
+                "pending": True,
+                "quality_score": (run.decomposition or {}).get("_quality_score"),
+                "wave_count": None,
+            } if run.decomposition else None,
+            "key_metrics": {
+                "repair_cycles_used": run.repair_cycles_used,
+                "budget_used_usd": round(getattr(run, "execution_budget_used_usd", 0.0), 6),
+                "elapsed_seconds": elapsed,
+                "event_count": len(run.events or []),
+                "same_failure_count": getattr(run, "same_failure_count", 0),
+            },
+            "recommendations": recommendations,
+        }
+
+    # ------------------------------------------------------------------
     # Epic #1076 — DevOps/VPS operator: health check, deploy status, diagnostics
     # ------------------------------------------------------------------
 
@@ -602,6 +790,93 @@ def create_router(deps) -> APIRouter:
         report["ports"] = ports
 
         return report
+
+    # ------------------------------------------------------------------
+    # Epic #1076 extended — Host registry, policy, deploy, smoke test
+    # ------------------------------------------------------------------
+
+    @router.get("/api/devops/hosts")
+    async def api_devops_hosts_list() -> Dict[str, object]:
+        """List all registered deployment hosts — Epic #1076."""
+        from igris.core.devops_manager import DevOpsManager
+        mgr = DevOpsManager(str(CONFIG.project_root))
+        return {"hosts": mgr.list_hosts()}
+
+    @router.post("/api/devops/hosts")
+    async def api_devops_hosts_register(request: Request) -> Dict[str, object]:
+        """Register (or update) a deployment host — Epic #1076.
+
+        Body: { hostname, alias?, policy?, allowed_paths?, allowed_services?,
+                requires_backup?, health_url? }
+        """
+        from igris.core.devops_manager import DevOpsManager, HostConfig
+        data = await request.json()
+        hostname = data.get("hostname", "").strip()
+        if not hostname:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=422, detail="hostname is required")
+        config = HostConfig.from_dict(data)
+        mgr = DevOpsManager(str(CONFIG.project_root))
+        return mgr.register_host(config)
+
+    @router.delete("/api/devops/hosts/{hostname}")
+    async def api_devops_hosts_remove(hostname: str) -> Dict[str, object]:
+        """Remove a host from the registry — Epic #1076."""
+        from igris.core.devops_manager import DevOpsManager
+        mgr = DevOpsManager(str(CONFIG.project_root))
+        result = mgr.remove_host(hostname)
+        if not result.get("removed"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail=result.get("error", "host not found"))
+        return result
+
+    @router.get("/api/devops/hosts/{hostname}/policy")
+    async def api_devops_host_policy(hostname: str, action: str = "deploy") -> Dict[str, object]:
+        """Check whether *action* is permitted on *hostname* — Epic #1076."""
+        from igris.core.devops_manager import DevOpsManager
+        mgr = DevOpsManager(str(CONFIG.project_root))
+        return mgr.check_policy(hostname, action)
+
+    @router.post("/api/devops/preflight")
+    async def api_devops_preflight(request: Request) -> Dict[str, object]:
+        """Run pre-deploy preflight checks — Epic #1076.
+
+        Body: { hostname? (for labelling), min_disk_pct_free? (default 10) }
+        """
+        from igris.core.devops_manager import DevOpsManager
+        data = await request.json()
+        mgr = DevOpsManager(str(CONFIG.project_root))
+        return mgr.run_preflight(
+            hostname=data.get("hostname"),
+            min_disk_pct_free=int(data.get("min_disk_pct_free", 10)),
+        )
+
+    @router.post("/api/devops/deploy")
+    async def api_devops_deploy(request: Request) -> Dict[str, object]:
+        """Full deploy cycle: preflight → action → postcheck — Epic #1076.
+
+        Body: { strategy? (default git_pull_restart), hostname?, health_url?,
+                dry_run? (default false) }
+        """
+        from igris.core.devops_manager import DevOpsManager
+        data = await request.json()
+        mgr = DevOpsManager(str(CONFIG.project_root))
+        return mgr.run_deploy(
+            strategy=data.get("strategy", "git_pull_restart"),
+            hostname=data.get("hostname"),
+            health_url=data.get("health_url", ""),
+            dry_run=bool(data.get("dry_run", False)),
+        )
+
+    @router.get("/api/devops/smoke")
+    async def api_devops_smoke(url: str = "") -> Dict[str, object]:
+        """HTTP smoke test — GET a URL and return evidence — Epic #1076.
+
+        Defaults to http://localhost:7778/api/ping if no url given.
+        """
+        from igris.core.devops_manager import DevOpsManager
+        mgr = DevOpsManager(str(CONFIG.project_root))
+        return mgr.run_smoke_test(url=url)
 
     # ------------------------------------------------------------------
     # Integration Layer — Epic #62

@@ -128,12 +128,22 @@ class ParsedCommand:
 
 
 def parse_command(raw: str) -> ParsedCommand:
-    """Parse a shell command string into structured representation."""
+    """Parse a shell command string into structured representation.
+
+    Epic #1072 fix: uses shlex.split() instead of .split() so quoted arguments
+    (e.g. 'git commit -m "fix: my message"') are parsed correctly.  Falls back
+    to simple whitespace split on shlex.ValueError (e.g. unterminated quotes).
+    """
+    import shlex as _shlex
     cmd = ParsedCommand(raw=raw)
     if not raw or not raw.strip():
         return cmd
 
-    parts = raw.strip().split()
+    try:
+        parts = _shlex.split(raw)
+    except ValueError:
+        # Unterminated quote or other shell syntax error — use naive split
+        parts = raw.strip().split()
     cmd.executable = parts[0] if parts else ""
     cmd.args = parts[1:] if len(parts) > 1 else []
 
@@ -464,6 +474,7 @@ class CommandRiskEngine:
         context: str = "",
         mission_id: str = "",
         trace_id: str = "",
+        cwd: Optional[str] = None,
     ) -> Tuple[SafetyEvent, RiskReviewResult]:
         """Evaluate a raw shell command through the full risk pipeline.
 
@@ -501,6 +512,30 @@ class CommandRiskEngine:
             event.reason = f"dry_run mode: would classify as {det_risk}"
             self._event_log.append(event)
             return event, RiskReviewResult()
+
+        # Epic #1072 — Contextual policy: cwd-based escalation.
+        # Commands run outside the project root (e.g. /etc, /var, /home/other)
+        # are escalated to at least 'medium' to flag unexpected scope.
+        # Commands run in system directories are escalated to 'high'.
+        if cwd:
+            import os as _os
+            _cwd_resolved = _os.path.realpath(str(cwd))
+            _proj_resolved = _os.path.realpath(str(self.project_root))
+            _in_project = _cwd_resolved.startswith(_proj_resolved)
+            _system_dirs = ("/etc", "/usr", "/var", "/bin", "/sbin", "/lib", "/boot", "/sys", "/proc")
+            _in_system = any(_cwd_resolved.startswith(d) for d in _system_dirs)
+            if _in_system:
+                event.reason = (
+                    f"Command cwd is a system directory ({_cwd_resolved!r}); escalating risk."
+                )
+                event.decision = "blocked"
+                event.deterministic_risk = "high"
+                event.final_risk = "high"
+                self._event_log.append(event)
+                return event, RiskReviewResult()
+            if not _in_project:
+                # Outside project root — log warning but don't block by default
+                context = context + f" [cwd={_cwd_resolved!r} is outside project root]"
 
         # 1. Parse command
         parsed = parse_command(command)
