@@ -169,6 +169,54 @@ def merge_results(results: List[ParallelResult]) -> Dict[str, Any]:
     }
 
 
+def detect_file_conflicts(tasks: List[ParallelTask]) -> Dict[str, List[str]]:
+    """Epic #1075 — Detect which files would be touched by multiple parallel tasks.
+
+    Inspects the `file_scopes` key in each task's initial_context (a list of
+    file paths the task is expected to modify). Returns a dict mapping each
+    conflicting file path to the list of task_ids that claim it.
+
+    Only reports files claimed by 2+ tasks. Tasks that are already serialised
+    via depends_on are excluded from conflict reporting (they won't run at the
+    same time).
+
+    Usage:
+        conflicts = detect_file_conflicts(tasks)
+        if conflicts:
+            # adjust task scopes or add dependencies
+    """
+    # Build a map of file → task_ids that claim it
+    file_to_tasks: Dict[str, List[str]] = {}
+    for task in tasks:
+        scopes: List[str] = task.initial_context.get("file_scopes", [])
+        for path in scopes:
+            norm = str(Path(path).as_posix())
+            file_to_tasks.setdefault(norm, []).append(task.task_id)
+
+    # Filter to files claimed by 2+ tasks (ignoring serialised pairs)
+    serialised_pairs: Set[tuple] = set()
+    for task in tasks:
+        for dep_id in task.depends_on:
+            serialised_pairs.add((dep_id, task.task_id))
+            serialised_pairs.add((task.task_id, dep_id))
+
+    conflicts: Dict[str, List[str]] = {}
+    for path, task_ids in file_to_tasks.items():
+        if len(task_ids) < 2:
+            continue
+        # Check if all pairs of tasks are serialised (then no real conflict)
+        conflict_pairs = [
+            (a, b)
+            for i, a in enumerate(task_ids)
+            for b in task_ids[i+1:]
+            if (a, b) not in serialised_pairs
+        ]
+        if conflict_pairs:
+            conflicts[path] = task_ids
+
+    return conflicts
+
+
 class ParallelTaskRunner:
     """Runs multiple AgentReasoningLoop instances concurrently.
 
@@ -176,6 +224,7 @@ class ParallelTaskRunner:
     - FileLock prevents concurrent writes to the same file
     - Dependency graph: tasks run in topological order via build_dependency_order()
     - merge_results() aggregates outputs into a summary
+    - detect_file_conflicts() pre-run conflict detection
     """
 
     def __init__(self, project_root: str, max_concurrent: int = 3) -> None:

@@ -368,6 +368,87 @@ class CommandRiskEngine:
         self.environment = environment
         self.dry_run = dry_run
         self._event_log: List[SafetyEvent] = []
+        # Epic #1072 — Precheck/postcheck hook registries
+        # Each hook is callable(command: str) -> Optional[str]
+        # Returning a non-None string means "block with this reason"
+        self._prechecks: List[Any] = []
+        self._postchecks: List[Any] = []
+
+    def register_precheck(self, fn: Any) -> None:
+        """Register a precheck hook called before command evaluation.
+
+        Epic #1072 — Precheck hooks run before the deterministic classifier.
+        A hook returns a string (block reason) or None (allow to proceed).
+        Hooks are called in registration order; first block wins.
+
+        Example:
+            engine.register_precheck(lambda cmd: "blocked" if "sudo" in cmd else None)
+        """
+        self._prechecks.append(fn)
+
+    def register_postcheck(self, fn: Any) -> None:
+        """Register a postcheck hook called after evaluation, before returning.
+
+        Epic #1072 — Postcheck hooks can veto an 'allowed' decision. They
+        receive the command and the SafetyEvent produced so far and return
+        a block reason string or None.
+
+        Example:
+            engine.register_postcheck(lambda cmd, evt: "no prod writes" if evt.final_risk == "high" else None)
+        """
+        self._postchecks.append(fn)
+
+    def _run_prechecks(self, command: str, event: "SafetyEvent") -> Optional[str]:
+        """Run all registered precheck hooks. Return first block reason or None."""
+        for hook in self._prechecks:
+            try:
+                reason = hook(command)
+                if reason is not None:
+                    return str(reason)
+            except Exception as exc:
+                import logging as _logging
+                _logging.getLogger("igris.risk.precheck").warning(
+                    "precheck hook %r raised: %s", hook, exc
+                )
+        return None
+
+    def _run_postchecks(self, command: str, event: "SafetyEvent") -> Optional[str]:
+        """Run all registered postcheck hooks. Return first block reason or None."""
+        for hook in self._postchecks:
+            try:
+                reason = hook(command, event)
+                if reason is not None:
+                    return str(reason)
+            except Exception as exc:
+                import logging as _logging
+                _logging.getLogger("igris.risk.postcheck").warning(
+                    "postcheck hook %r raised: %s", hook, exc
+                )
+        return None
+
+    def get_rollback_suggestion(self, command: str, event: "SafetyEvent") -> str:
+        """Return a human-readable rollback suggestion for a CRITICAL/HIGH command.
+
+        Epic #1072 — Binding rollback hints let operators know how to undo
+        a command if it runs and causes problems.
+        """
+        cmd_lower = command.lower()
+        if "rm " in cmd_lower or "rmdir" in cmd_lower:
+            return "Restore from the last git commit or backup: `git checkout -- .`"
+        if "drop table" in cmd_lower or "truncate table" in cmd_lower:
+            return "Restore from the last database snapshot or `pg_dump` backup."
+        if "git reset --hard" in cmd_lower:
+            return "Use `git reflog` to find the pre-reset SHA and `git reset --hard <SHA>`."
+        if "git clean" in cmd_lower:
+            return "Untracked files cannot be recovered after `git clean -f`. Restore from backup."
+        if "dd if=" in cmd_lower or "mkfs" in cmd_lower:
+            return "Disk write is irreversible. Restore from full disk backup or snapshot."
+        if event.final_risk in ("critical", "high"):
+            return (
+                f"Command classified as {event.final_risk}. Take a snapshot or backup before running. "
+                "To rollback: restore from the most recent backup of affected resources."
+            )
+        return ""
 
     def is_destructive(self, command: str) -> bool:
         """Epic #1072 — Pre-check: return True if command matches destructive patterns.
@@ -398,6 +479,16 @@ class CommandRiskEngine:
             mission_id=mission_id,
             trace_id=trace_id,
         )
+
+        # Epic #1072 — run precheck hooks before any evaluation
+        precheck_block = self._run_prechecks(command, event)
+        if precheck_block:
+            event.decision = "blocked"
+            event.reason = f"precheck: {precheck_block}"
+            event.final_risk = "high"
+            event.deterministic_risk = "high"
+            self._event_log.append(event)
+            return event, RiskReviewResult()
 
         # Epic #1072 — dry-run mode: classify but never gate execution
         if self.dry_run:
@@ -460,6 +551,13 @@ class CommandRiskEngine:
             event.final_risk, parsed, review,
         )
         event.review_result = review.to_dict()
+
+        # Epic #1072 — run postcheck hooks (can veto 'allowed' or 'needs_approval')
+        if event.decision in ("allowed", "needs_approval"):
+            postcheck_block = self._run_postchecks(command, event)
+            if postcheck_block:
+                event.decision = "blocked"
+                event.reason = f"postcheck: {postcheck_block}"
 
         # 6. Log event
         self._event_log.append(event)

@@ -364,3 +364,119 @@ class DeliveryWorkflow:
             return False, f"pr_review_gate_failed: {gate_reason}"
         merged = self.merge_pr(pr_number)
         return merged, "merged" if merged else "merge_failed"
+
+    # ------------------------------------------------------------------
+    # Epic #1071 — Branch cleanup and LLM-guided CI repair
+    # ------------------------------------------------------------------
+
+    def delete_merged_branch(self, branch: str, *, remote: bool = True) -> bool:
+        """Delete a branch after successful merge.
+
+        Deletes both the remote tracking ref and the local branch.
+        Returns True if deletion succeeded (or branch did not exist).
+        """
+        success = True
+        if remote:
+            try:
+                r = subprocess.run(
+                    ["git", "push", "origin", "--delete", branch],
+                    cwd=self.project_root, capture_output=True, text=True, timeout=30,
+                )
+                if r.returncode != 0 and "remote ref does not exist" not in r.stderr:
+                    _log.warning("delete_merged_branch: remote delete failed for %r: %s", branch, r.stderr[:200])
+                    success = False
+            except Exception as exc:
+                _log.warning("delete_merged_branch: remote delete exception for %r: %s", branch, exc)
+                success = False
+
+        # Delete local branch (may not exist if we only have the remote)
+        try:
+            r = subprocess.run(
+                ["git", "branch", "-d", branch],
+                cwd=self.project_root, capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode != 0 and "not found" not in r.stderr and "error: branch" not in r.stderr:
+                _log.warning("delete_merged_branch: local delete failed for %r: %s", branch, r.stderr[:200])
+        except Exception as exc:
+            _log.warning("delete_merged_branch: local delete exception for %r: %s", branch, exc)
+
+        _log.info("delete_merged_branch: %r remote=%s success=%s", branch, remote, success)
+        return success
+
+    def merge_with_cleanup(
+        self,
+        pr_number: int,
+        branch: str,
+        *,
+        timeout: int = 600,
+        delete_branch: bool = True,
+    ) -> Tuple[bool, str]:
+        """Full merge pipeline: CI gate → merge → branch cleanup.
+
+        Returns (success, reason). On merge success, deletes branch if
+        delete_branch=True. Logs hygiene report for the branch before merge.
+        """
+        # Log hygiene for visibility before deleting
+        hygiene = self.check_branch_hygiene(branch)
+        _log.info(
+            "merge_with_cleanup: branch %r — age=%.1fd recommendation=%s",
+            branch, hygiene.age_days, hygiene.recommendation,
+        )
+
+        merged, reason = self.merge_pr_after_ci(pr_number, timeout=timeout)
+        if not merged:
+            return False, reason
+
+        if delete_branch:
+            self.delete_merged_branch(branch)
+
+        return True, "merged_and_cleaned"
+
+    def suggest_ci_repair_goal(self, diagnosis: dict, original_goal: str) -> str:
+        """Build a targeted repair goal string for LLM-guided CI repair.
+
+        Epic #1071 — rather than retrying the full original goal, this
+        produces a focused goal string that tells the repair reasoning loop
+        exactly which tests are failing and what to fix.
+
+        The returned string can be passed to backend.run_reasoning as the goal.
+        """
+        failure_type = diagnosis.get("failure_type", "unknown")
+        failing_tests = diagnosis.get("failing_tests", [])
+        failed_jobs = diagnosis.get("failed_jobs", [])
+        summary = diagnosis.get("summary", "")
+
+        if failure_type == "test_failure" and failing_tests:
+            test_list = ", ".join(f"`{t}`" for t in failing_tests[:5])
+            return (
+                f"CI repair: fix the following failing tests in the current branch.\n\n"
+                f"Failing tests: {test_list}\n\n"
+                f"Do NOT change any test file. Fix only the source code to make these tests pass.\n"
+                f"Original mission context: {original_goal[:300]}"
+            )
+        elif failure_type == "lint_error":
+            return (
+                f"CI repair: fix lint/style errors in the current branch.\n"
+                f"Run `ruff check --fix` and `ruff format` on changed files.\n"
+                f"Original mission context: {original_goal[:300]}"
+            )
+        elif failure_type == "import_error":
+            return (
+                f"CI repair: fix ImportError/ModuleNotFoundError in the current branch.\n"
+                f"Failed jobs: {', '.join(failed_jobs[:3])}\n"
+                f"Check missing imports, __init__.py files, and package structure.\n"
+                f"Original mission context: {original_goal[:300]}"
+            )
+        elif failure_type == "syntax_error":
+            return (
+                f"CI repair: fix SyntaxError/IndentationError in the current branch.\n"
+                f"Check recently edited Python files for syntax problems.\n"
+                f"Original mission context: {original_goal[:300]}"
+            )
+        else:
+            return (
+                f"CI repair: CI failed with the following summary: {summary}\n"
+                f"Failed jobs: {', '.join(failed_jobs[:3])}\n"
+                f"Investigate and fix the root cause. Do not break passing tests.\n"
+                f"Original mission context: {original_goal[:300]}"
+            )

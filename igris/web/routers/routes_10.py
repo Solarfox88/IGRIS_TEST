@@ -291,6 +291,93 @@ def create_router(deps) -> APIRouter:
         return {"run_id": run_id, "status": "blocking", "reason": reason}
 
     # ------------------------------------------------------------------
+    # Epic #1077 — Evidence card: diff summary + test results for a run
+    # ------------------------------------------------------------------
+
+    @router.get("/api/rank/runs/{run_id}/evidence")
+    async def api_rank_run_evidence(run_id: str) -> Dict[str, object]:
+        """Return evidence card for a run (Epic #1077).
+
+        Provides:
+        - diff_summary: files changed, lines added/removed (from git diff)
+        - test_results: latest test phase outcome (pass/fail counts, failed tests)
+        - cost_breakdown: budget used per phase from run events
+        - key_events: phase → status snapshot for the full run
+
+        Useful for the Control Room "understand what changed" view.
+        """
+        from igris.core.self_repair_supervisor import get_supervised_run
+        import subprocess as _sp
+        run = get_supervised_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="rank run not found")
+
+        # 1. Diff summary from git
+        diff_summary: Dict[str, object] = {"available": False}
+        try:
+            diff_stat = _sp.run(
+                ["git", "diff", "--stat", "HEAD"],
+                cwd=str(CONFIG.project_root),
+                capture_output=True, text=True, timeout=10,
+            )
+            if diff_stat.returncode == 0 and diff_stat.stdout.strip():
+                lines = diff_stat.stdout.strip().splitlines()
+                summary_line = lines[-1] if lines else ""
+                diff_summary = {
+                    "available": True,
+                    "files_changed": [l.split("|")[0].strip() for l in lines[:-1]],
+                    "summary": summary_line,
+                }
+            else:
+                diff_summary = {"available": True, "files_changed": [], "summary": "no changes"}
+        except Exception as exc:
+            diff_summary = {"available": False, "error": str(exc)[:200]}
+
+        # 2. Test results from latest targeted_tests / full_tests event
+        test_results: Dict[str, object] = {"available": False}
+        for evt in reversed(run.events):
+            phase = evt.phase if hasattr(evt, "phase") else evt.get("phase", "")
+            if phase in ("targeted_tests", "full_tests", "run_tests"):
+                detail = evt.detail if hasattr(evt, "detail") else str(evt.get("detail", ""))
+                status = evt.status if hasattr(evt, "status") else str(evt.get("status", ""))
+                test_results = {
+                    "available": True,
+                    "phase": phase,
+                    "status": status,
+                    "detail": detail[:500],
+                }
+                break
+
+        # 3. Cost breakdown per phase
+        cost_breakdown: Dict[str, float] = {}
+        total_cost = 0.0
+        for evt in run.events:
+            data = evt.data if hasattr(evt, "data") else {}
+            phase = evt.phase if hasattr(evt, "phase") else str(evt.get("phase", ""))
+            cost = float(data.get("estimated_cost", 0) or 0)
+            if cost > 0:
+                cost_breakdown[phase] = cost_breakdown.get(phase, 0.0) + cost
+                total_cost += cost
+
+        # 4. Key events snapshot
+        key_events = [
+            {
+                "phase": e.phase if hasattr(e, "phase") else str(e.get("phase", "")),
+                "status": e.status if hasattr(e, "status") else str(e.get("status", "")),
+            }
+            for e in run.events
+        ]
+
+        return {
+            "run_id": run_id,
+            "diff_summary": diff_summary,
+            "test_results": test_results,
+            "cost_breakdown": cost_breakdown,
+            "total_cost_usd": round(total_cost, 6),
+            "key_events": key_events,
+        }
+
+    # ------------------------------------------------------------------
     # Epic #1076 — DevOps/VPS operator: health check, deploy status, diagnostics
     # ------------------------------------------------------------------
 
@@ -391,25 +478,130 @@ def create_router(deps) -> APIRouter:
 
     @router.get("/api/devops/diagnostics")
     async def api_devops_diagnostics() -> Dict[str, object]:
-        """Nginx/systemd diagnostic — Epic #1076.
+        """Full VPS/server diagnostic — Epic #1076.
 
-        Returns systemd service status for igris and nginx (if available).
-        Best-effort: missing services return status=unknown.
+        Returns:
+        - systemd service status for igris, nginx, docker (if available)
+        - nginx config test result (nginx -t)
+        - docker containers list (if docker is installed)
+        - SSL certificate expiry for configured domain
+        - open ports (ss -tlnp summary)
+
+        Best-effort: each check records its own error if it fails.
         """
         import subprocess as _sp
+        import re as _re
+        import os as _os
+
+        report: Dict[str, object] = {}
+
+        # 1. Systemd services
         services: Dict[str, object] = {}
-        for svc in ("igris", "nginx"):
+        for svc in ("igris", "nginx", "docker"):
             try:
-                _svc = _sp.run(
+                _r = _sp.run(
                     ["systemctl", "is-active", svc],
                     capture_output=True, text=True, timeout=5,
                 )
-                status = _svc.stdout.strip() or "unknown"
-                services[svc] = {"status": status}
+                status = _r.stdout.strip() or "unknown"
+                # Also grab the loaded/active/sub state for more detail
+                _status_r = _sp.run(
+                    ["systemctl", "show", svc, "--property=ActiveState,SubState,LoadState"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                props: Dict[str, str] = {}
+                for line in _status_r.stdout.splitlines():
+                    if "=" in line:
+                        k, _, v = line.partition("=")
+                        props[k.strip()] = v.strip()
+                services[svc] = {"status": status, **props}
             except Exception as exc:
                 services[svc] = {"status": "unknown", "error": str(exc)[:100]}
+        report["services"] = services
 
-        return {"services": services}
+        # 2. Nginx config test
+        nginx_config: Dict[str, object] = {"available": False}
+        try:
+            _ng = _sp.run(
+                ["nginx", "-t"],
+                capture_output=True, text=True, timeout=10,
+            )
+            nginx_config = {
+                "available": True,
+                "ok": _ng.returncode == 0,
+                "output": (_ng.stdout + _ng.stderr).strip()[:500],
+            }
+        except FileNotFoundError:
+            nginx_config = {"available": False, "reason": "nginx not installed"}
+        except Exception as exc:
+            nginx_config = {"available": False, "error": str(exc)[:100]}
+        report["nginx_config"] = nginx_config
+
+        # 3. Docker containers
+        docker_containers: Dict[str, object] = {"available": False}
+        try:
+            _dk = _sp.run(
+                ["docker", "ps", "--format", "{{.Names}}\t{{.Status}}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if _dk.returncode == 0:
+                containers = []
+                for line in _dk.stdout.strip().splitlines():
+                    parts = line.split("\t", 1)
+                    if len(parts) == 2:
+                        containers.append({"name": parts[0], "status": parts[1]})
+                docker_containers = {"available": True, "containers": containers}
+            else:
+                docker_containers = {"available": False, "error": _dk.stderr.strip()[:200]}
+        except FileNotFoundError:
+            docker_containers = {"available": False, "reason": "docker not installed"}
+        except Exception as exc:
+            docker_containers = {"available": False, "error": str(exc)[:100]}
+        report["docker"] = docker_containers
+
+        # 4. SSL certificate expiry (uses openssl if domain is configured)
+        ssl_info: Dict[str, object] = {"available": False}
+        _domain = _os.environ.get("IGRIS_VPS_DOMAIN", "")
+        if _domain:
+            try:
+                _ssl = _sp.run(
+                    ["openssl", "s_client", "-connect", f"{_domain}:443",
+                     "-servername", _domain, "-showcerts"],
+                    input="", capture_output=True, text=True, timeout=10,
+                )
+                _cert = _sp.run(
+                    ["openssl", "x509", "-noout", "-dates"],
+                    input=_ssl.stdout, capture_output=True, text=True, timeout=5,
+                )
+                _exp = {}
+                for line in _cert.stdout.splitlines():
+                    if "notAfter" in line:
+                        _exp["expires"] = line.split("=", 1)[1].strip()
+                    if "notBefore" in line:
+                        _exp["valid_from"] = line.split("=", 1)[1].strip()
+                ssl_info = {"available": True, "domain": _domain, **_exp}
+            except Exception as exc:
+                ssl_info = {"available": False, "domain": _domain, "error": str(exc)[:100]}
+        report["ssl"] = ssl_info
+
+        # 5. Open listening ports (ss -tlnp)
+        ports: Dict[str, object] = {"available": False}
+        try:
+            _ss = _sp.run(
+                ["ss", "-tlnp"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if _ss.returncode == 0:
+                # Parse port numbers from Local Address:Port column
+                _ports_found = list(set(_re.findall(r":(\d+)\s", _ss.stdout)))
+                ports = {"available": True, "listening_ports": sorted(int(p) for p in _ports_found if p.isdigit())}
+            else:
+                ports = {"available": False, "error": _ss.stderr.strip()[:100]}
+        except Exception as exc:
+            ports = {"available": False, "error": str(exc)[:100]}
+        report["ports"] = ports
+
+        return report
 
     # ------------------------------------------------------------------
     # Integration Layer — Epic #62

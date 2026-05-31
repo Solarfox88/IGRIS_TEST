@@ -234,6 +234,79 @@ def _failure_error_code(failure_class: str) -> str:
     return FAILURE_ERROR_CODES.get(str(failure_class or "").strip(), "E999")
 
 
+# ---------------------------------------------------------------------------
+# Epic #1074 — Standalone failure classifier (modularization step)
+# ---------------------------------------------------------------------------
+
+def classify_failure_from_output(
+    stdout: str,
+    stderr: str,
+    returncode: int,
+    *,
+    timed_out: bool = False,
+) -> str:
+    """Classify a test/command output into a REPAIRABLE_FAILURES failure class.
+
+    This is a deterministic, pure-function classifier extracted from the
+    repair cycle so it can be tested and reused independently.
+
+    Priority order (highest wins):
+      1. timed_out                  → test_runner_timeout
+      2. SyntaxError / IndentationError in output → syntax_error
+      3. ImportError / ModuleNotFoundError        → infrastructure_bug
+      4. returncode != 0 with FAILED in output   → pytest_failure
+      5. returncode != 0, output empty or generic → reasoning_loop_blocked
+      6. returncode == 0                         → "" (no failure)
+
+    Returns a failure_class string from REPAIRABLE_FAILURES or "".
+    """
+    if timed_out:
+        return "test_runner_timeout"
+
+    combined = (stdout or "") + (stderr or "")
+
+    if "SyntaxError" in combined or "IndentationError" in combined:
+        return "syntax_error"
+
+    if "ImportError" in combined or "ModuleNotFoundError" in combined:
+        return "infrastructure_bug"
+
+    if returncode != 0:
+        if "FAILED" in combined or "AssertionError" in combined or "ERROR" in combined:
+            return "pytest_failure"
+        if "wrong file" in combined.lower() or "unexpected edit" in combined.lower():
+            return "wrong_file_edit"
+        return "reasoning_loop_blocked"
+
+    return ""
+
+
+def classify_failure_severity(failure_class: str) -> str:
+    """Return severity tier for a failure class.
+
+    Used to select repair strategy intensity:
+      - critical: immediate escalation to strong model
+      - high: repair with extended timeout
+      - medium: standard repair cycle
+      - low: soft retry (no cost escalation)
+    """
+    _CRITICAL = {"syntax_error", "infrastructure_bug", "invalid_bootstrap"}
+    _HIGH = {"pytest_failure", "wrong_file_edit", "semantic_incomplete"}
+    _MEDIUM = {"missing_tests", "missing_ui_visibility", "reasoning_loop_blocked"}
+    _LOW = {"max_steps", "ask_user", "test_runner_timeout"}
+
+    fc = str(failure_class or "").strip()
+    if fc in _CRITICAL:
+        return "critical"
+    if fc in _HIGH:
+        return "high"
+    if fc in _MEDIUM:
+        return "medium"
+    if fc in _LOW:
+        return "low"
+    return "unknown"
+
+
 def _command_detail(result: "CommandResult") -> str:
     parts = []
     if result.output:
@@ -7342,17 +7415,22 @@ class SelfRepairSupervisor:
             deps = sub.get("dependencies") or []
 
             # Epic #1078 — Title hygiene: reject vague or auto-generated titles.
-            _title_rejected = False
+            # Normalized format: <Area>: <concrete action> for <scope>
             _title_lower = title.lower().strip()
-            if (
+            _title_is_vague = (
                 not _title_lower
                 or len(_title_lower) < 5
                 or _title_lower.startswith("implement github issue #")
                 or "igris/**" in _title_lower
                 or _title_lower.startswith("sub-task ")
                 or _title_lower.startswith("sub_task ")
-            ):
-                _clean_title = f"{config.rank_id}: fix sub-task {i+1} from decomposition"
+                or _title_lower == f"sub-task {i+1}"
+            )
+            if _title_is_vague:
+                # Build a meaningful title from goal text rather than a generic placeholder
+                _goal_short = goal_text.strip()[:60].rstrip(".").rstrip(",")
+                _area = (scopes[0].split("/")[0] if scopes else config.rank_id).strip("/")
+                _clean_title = f"{_area}: {_goal_short}" if _goal_short else f"{config.rank_id}: sub-task {i+1}"
                 run.add(
                     "subissue_title_hygiene",
                     "normalized",
@@ -7436,10 +7514,18 @@ class SelfRepairSupervisor:
                     pass
                 continue
 
+            # Epic #1078 — Extract full schema fields from sub-mission dict
+            out_of_scope = sub.get("out_of_scope") or []
+            success_signal = str(sub.get("success_signal", "")).strip()
+            failure_fallback = str(sub.get("failure_fallback", "")).strip()
+
             scopes_md = "\n".join(f"- `{s}`" for s in scopes) if scopes else "_not specified_"
             tests_md = "\n".join(f"- `{t}`" for t in tests) if tests else "_not specified_"
             criteria_md = "\n".join(f"- {c}" for c in criteria) if criteria else "_not specified_"
             deps_md = ", ".join(deps) if deps else "none"
+            oos_md = "\n".join(f"- {o}" for o in out_of_scope) if out_of_scope else "_not specified_"
+            success_md = success_signal or "All acceptance criteria verified by the supervisor"
+            fallback_md = failure_fallback or "Escalate to human review; reopen parent issue"
 
             body = (
                 f"## Sub-mission {i+1} of {len(sub_missions)}\n\n"
@@ -7449,6 +7535,9 @@ class SelfRepairSupervisor:
                 f"### Acceptance criteria\n{criteria_md}\n\n"
                 f"### File scopes\n{scopes_md}\n\n"
                 f"### Test targets\n{tests_md}\n\n"
+                f"### Out of scope\n{oos_md}\n\n"
+                f"### Success signal\n{success_md}\n\n"
+                f"### Failure fallback\n{fallback_md}\n\n"
                 f"---\n"
                 f"**Parent run:** `{run.run_id}` (rank `{run.rank_id}`)\n"
                 f"**Decomposition source:** `{generated_by}`\n"

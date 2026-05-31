@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -11,6 +12,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from igris.core.embedding_store import EmbeddingStore
+
+_log = logging.getLogger("igris.memory.graph")
 
 NODE_TYPES = {
     "identity_fact", "project_fact", "command_recipe", "lesson",
@@ -136,8 +139,15 @@ CREATE INDEX IF NOT EXISTS idx_edges_dst  ON memory_edges(dst_node);
                 content=text,
                 created_at=created_at,
             )
-        except Exception:
-            pass  # never block the main write path
+        except Exception as exc:
+            # Epic #1073 — non-silent failure: log warning so memory tree failures
+            # are observable (they previously swallowed all errors silently).
+            # We still don't raise to avoid blocking the main write path.
+            _log.warning(
+                "MemoryGraph._tree_write: ContentStore/Scorer write failed for node %s "
+                "(type=%s): %s — memory tree entry skipped",
+                node_id, node_type, exc,
+            )
 
     def add_edge(self, src_node, dst_node, edge_type, weight=1.0) -> str:
         if edge_type not in EDGE_TYPES:
