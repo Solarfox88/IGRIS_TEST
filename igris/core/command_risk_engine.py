@@ -341,17 +341,41 @@ class CommandRiskEngine:
 
     For raw shell proposals:
         parse → deterministic classify → LLM review (MEDIUM+) → policy decision
+
+    Epic #1072 improvements:
+        - Contextual policy: higher risk threshold in production environments
+        - Destructive pre-check: explicit check before any destructive command
+        - Dry-run mode: evaluate without executing; return would-execute result
     """
+
+    #: Known destructive command patterns
+    DESTRUCTIVE_PATTERNS = re.compile(
+        r"\b(rm\b.*(-r|-f|-rf)|DROP\s+TABLE|TRUNCATE\s+TABLE|git\s+clean|"
+        r"git\s+reset\s+--hard|mkfs|dd\s+if=|shred|wipefs)\b",
+        re.IGNORECASE,
+    )
 
     def __init__(
         self,
         project_root: Optional[str] = None,
         use_llm_reviewer: bool = True,
+        environment: str = "dev",  # Epic #1072: "dev" | "staging" | "production"
+        dry_run: bool = False,      # Epic #1072: if True, never executes
     ):
         import os
         self.project_root = project_root or os.environ.get("PROJECT_ROOT", ".")
         self.use_llm_reviewer = use_llm_reviewer
+        self.environment = environment
+        self.dry_run = dry_run
         self._event_log: List[SafetyEvent] = []
+
+    def is_destructive(self, command: str) -> bool:
+        """Epic #1072 — Pre-check: return True if command matches destructive patterns.
+
+        This is a fast, deterministic check run before full evaluation.
+        Destructive commands always get at least 'high' risk in production.
+        """
+        return bool(self.DESTRUCTIVE_PATTERNS.search(command))
 
     def evaluate_command(
         self,
@@ -363,12 +387,29 @@ class CommandRiskEngine:
         """Evaluate a raw shell command through the full risk pipeline.
 
         Returns (SafetyEvent, RiskReviewResult).
+
+        Epic #1072:
+        - If dry_run=True, returns a would-execute event with decision="dry_run"
+        - If environment="production" and command is destructive → escalate to critical
+        - Destructive pre-check always fires before LLM review
         """
         event = SafetyEvent(
             command=command,
             mission_id=mission_id,
             trace_id=trace_id,
         )
+
+        # Epic #1072 — dry-run mode: classify but never gate execution
+        if self.dry_run:
+            parsed = parse_command(command)
+            det_risk = classify_command_risk(parsed)
+            event.parsed_flags = parsed.flags_list()
+            event.deterministic_risk = det_risk
+            event.final_risk = det_risk
+            event.decision = "dry_run"
+            event.reason = f"dry_run mode: would classify as {det_risk}"
+            self._event_log.append(event)
+            return event, RiskReviewResult()
 
         # 1. Parse command
         parsed = parse_command(command)
@@ -377,6 +418,23 @@ class CommandRiskEngine:
         # 2. Deterministic classification
         det_risk = classify_command_risk(parsed)
         event.deterministic_risk = det_risk
+
+        # Epic #1072 — Destructive pre-check: escalate in production
+        if self.is_destructive(command):
+            if self.environment == "production":
+                det_risk = "critical"
+                event.deterministic_risk = "critical"
+                event.reason = (
+                    f"Destructive command blocked in production environment: {command[:100]}"
+                )
+                event.decision = "blocked"
+                event.final_risk = "critical"
+                self._event_log.append(event)
+                return event, RiskReviewResult()
+            elif self.environment == "staging" and det_risk not in ("high", "critical"):
+                # Escalate destructive commands in staging to at least high
+                det_risk = "high"
+                event.deterministic_risk = "high"
 
         # 3. LLM review for MEDIUM, HIGH, UNKNOWN
         review = RiskReviewResult()
@@ -387,7 +445,17 @@ class CommandRiskEngine:
         # 4. Final risk = max(deterministic, llm) for safety
         event.final_risk = self._resolve_final_risk(det_risk, event.llm_risk)
 
-        # 5. Policy decision
+        # Epic #1072 — Contextual policy: production blocks HIGH (not just CRITICAL)
+        if self.environment == "production" and event.final_risk in ("high", "critical"):
+            event.decision = "blocked"
+            event.reason = (
+                f"Blocked in production environment (risk={event.final_risk}): "
+                + (", ".join(review.reasons) or "policy")
+            )
+            self._event_log.append(event)
+            return event, review
+
+        # 5. Standard policy decision
         event.decision, event.reason = self._apply_policy(
             event.final_risk, parsed, review,
         )

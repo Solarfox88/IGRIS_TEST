@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import subprocess
 import time
-from dataclasses import dataclass
-from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+_log = logging.getLogger("igris.delivery")
+
+# Epic #1071 — Stale branch age threshold in seconds (default: 14 days)
+STALE_BRANCH_AGE_SECONDS = int(14 * 24 * 3600)
 
 
 @dataclass
@@ -12,6 +19,20 @@ class CIStatus:
     status: str
     failed_jobs: List[str]
     logs_url: str
+    # Epic #1071 — structured failure diagnosis
+    failure_type: str = ""
+    failing_tests: List[str] = field(default_factory=list)
+    log_excerpt: str = ""
+
+
+@dataclass
+class BranchHygieneReport:
+    """Epic #1071 — Result of branch hygiene check."""
+    branch: str
+    is_stale: bool
+    age_days: float
+    last_commit_ts: float
+    recommendation: str  # "ok" | "warn" | "delete"
 
 
 class DeliveryWorkflow:
@@ -189,3 +210,157 @@ class DeliveryWorkflow:
             MemoryGraph(self.project_root).unsaturate_family(family)
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Epic #1071 — CI failure diagnosis
+    # ------------------------------------------------------------------
+
+    def parse_failing_tests(self, log_text: str) -> List[str]:
+        """Extract failing test names from pytest output.
+
+        Recognises patterns like:
+          FAILED tests/test_foo.py::TestBar::test_baz
+          FAILED tests/test_foo.py::test_func
+        Returns a deduplicated list of test node IDs.
+        """
+        pattern = re.compile(r"FAILED\s+(tests/[^\s:]+(?:::[^\s]+)?)")
+        found = pattern.findall(log_text)
+        seen: Dict[str, bool] = {}
+        result = []
+        for item in found:
+            if item not in seen:
+                seen[item] = True
+                result.append(item)
+        return result
+
+    def diagnose_ci_failure_structured(self, log_text: str, failed_jobs: List[str]) -> dict:
+        """Return a structured CI failure diagnosis from raw log text.
+
+        Epic #1071 — enriches the existing diagnosis with parsed test names
+        and a human-readable summary so the repair loop can target specific
+        failing tests rather than retrying the whole suite.
+        """
+        failure_type = "unknown"
+        failing_tests: List[str] = []
+
+        if "ImportError" in log_text or "ModuleNotFoundError" in log_text:
+            failure_type = "import_error"
+        elif "SyntaxError" in log_text:
+            failure_type = "syntax_error"
+        elif "ruff" in log_text.lower() or "flake8" in log_text.lower():
+            failure_type = "lint_error"
+        elif "FAILED tests/" in log_text or "AssertionError" in log_text:
+            failure_type = "test_failure"
+            failing_tests = self.parse_failing_tests(log_text)
+
+        if failure_type == "test_failure" and failing_tests:
+            summary = (
+                f"CI test failure: {len(failing_tests)} test(s) failed — "
+                + ", ".join(failing_tests[:5])
+            )
+        elif failure_type != "unknown":
+            summary = f"CI failure type: {failure_type} in job(s): {', '.join(failed_jobs[:3])}"
+        else:
+            summary = f"CI failure: {len(failed_jobs)} job(s) failed; review logs for details"
+
+        _log.info("diagnose_ci_failure_structured: type=%s, failing_tests=%d", failure_type, len(failing_tests))
+        return {
+            "failure_type": failure_type,
+            "failing_tests": failing_tests,
+            "failed_jobs": failed_jobs,
+            "log_excerpt": log_text[:2000],
+            "summary": summary,
+        }
+
+    # ------------------------------------------------------------------
+    # Epic #1071 — Branch hygiene check
+    # ------------------------------------------------------------------
+
+    def check_branch_hygiene(self, branch: str) -> BranchHygieneReport:
+        """Check if *branch* is stale (older than STALE_BRANCH_AGE_SECONDS).
+
+        Uses `git log` to find the last commit timestamp. Returns a
+        BranchHygieneReport with staleness status and recommendation.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "log", "-1", "--format=%ct", branch],
+                cwd=self.project_root,
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return BranchHygieneReport(
+                    branch=branch, is_stale=False, age_days=0.0,
+                    last_commit_ts=0.0, recommendation="ok",
+                )
+            last_commit_ts = float(result.stdout.strip())
+            age_seconds = time.time() - last_commit_ts
+            age_days = age_seconds / 86400
+            is_stale = age_seconds > STALE_BRANCH_AGE_SECONDS
+
+            if is_stale:
+                recommendation = "delete" if age_days > 30 else "warn"
+                _log.warning(
+                    "check_branch_hygiene: branch %r is stale (%.1f days old)",
+                    branch, age_days,
+                )
+            else:
+                recommendation = "ok"
+
+            return BranchHygieneReport(
+                branch=branch,
+                is_stale=is_stale,
+                age_days=round(age_days, 1),
+                last_commit_ts=last_commit_ts,
+                recommendation=recommendation,
+            )
+        except Exception as exc:
+            _log.warning("check_branch_hygiene: failed for branch %r: %s", branch, exc)
+            return BranchHygieneReport(
+                branch=branch, is_stale=False, age_days=0.0,
+                last_commit_ts=0.0, recommendation="ok",
+            )
+
+    # ------------------------------------------------------------------
+    # Epic #1071 — PR review gate (wait for CI before merge)
+    # ------------------------------------------------------------------
+
+    def pr_review_gate(
+        self,
+        pr_number: int,
+        *,
+        require_green_ci: bool = True,
+        timeout: int = 600,
+    ) -> Tuple[bool, str]:
+        """Block until CI passes (or times out) before allowing merge.
+
+        Returns (True, "green") if CI passes within timeout, or
+        (False, reason) if CI fails or times out.
+
+        Epic #1071 — prevents merging PRs with failing CI.
+        """
+        if not require_green_ci:
+            _log.info("pr_review_gate: CI gate bypassed (require_green_ci=False)")
+            return True, "bypassed"
+
+        ci = self.wait_for_ci(pr_number, timeout=timeout)
+        if ci.status == "green":
+            _log.info("pr_review_gate: CI is green for PR #%d", pr_number)
+            return True, "green"
+        elif ci.status == "timeout":
+            _log.warning("pr_review_gate: CI timed out for PR #%d after %ds", pr_number, timeout)
+            return False, f"ci_timeout_after_{timeout}s"
+        else:
+            _log.warning(
+                "pr_review_gate: CI is red for PR #%d, failed jobs: %s",
+                pr_number, ci.failed_jobs,
+            )
+            return False, f"ci_red: {', '.join(ci.failed_jobs[:5])}"
+
+    def merge_pr_after_ci(self, pr_number: int, timeout: int = 600) -> Tuple[bool, str]:
+        """Merge only after CI passes. Returns (success, reason)."""
+        gate_ok, gate_reason = self.pr_review_gate(pr_number, timeout=timeout)
+        if not gate_ok:
+            return False, f"pr_review_gate_failed: {gate_reason}"
+        merged = self.merge_pr(pr_number)
+        return merged, "merged" if merged else "merge_failed"
