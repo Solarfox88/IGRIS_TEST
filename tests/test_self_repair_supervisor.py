@@ -229,6 +229,14 @@ class FakeBackend:
     def api_helper_is_configured(self) -> bool:
         return getattr(self, "_api_helper_configured", True)
 
+    def checkout_main(self):
+        self.commands.append("checkout_main")
+        return getattr(self, "checkout_main_result", CommandResult(True, "checked out main"))
+
+    def delete_stale_rank_branches(self):
+        self.commands.append("delete_stale_rank_branches")
+        return getattr(self, "delete_stale_rank_branches_result", CommandResult(True, "deleted stale branches"))
+
 
 def _config(**overrides):
     data = {
